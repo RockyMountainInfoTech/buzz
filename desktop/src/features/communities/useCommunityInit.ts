@@ -15,6 +15,7 @@ import { getOverrides } from "@/shared/features";
 import { resetMediaCaches } from "@/shared/lib/mediaUrl";
 import { resetLinkPreviewMetadataCache } from "@/shared/lib/useResolvedLinkPreviews";
 import { clearSearchHitEventCache } from "@/app/navigation/searchHitEventCache";
+import { resetNavigationDeepLinkDrain } from "@/shared/deep-link";
 import {
   clearAllDrafts,
   initDraftStore,
@@ -53,6 +54,7 @@ function resetCommunityState({
   resetAvatarState: boolean;
 }): void {
   relayClient.disconnect();
+  resetNavigationDeepLinkDrain();
   resetRateLimitGate();
   clearAllDrafts();
   resetAgentObserverStore();
