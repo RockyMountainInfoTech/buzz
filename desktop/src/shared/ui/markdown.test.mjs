@@ -534,6 +534,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 
+import { isChannelLink } from "../../features/messages/lib/channelLink.ts";
 import { isMessageLink } from "../../features/messages/lib/messageLink.ts";
 import { parseEntityLink } from "../lib/entityLink.ts";
 import remarkSpoilers from "../lib/remarkSpoilers.ts";
@@ -545,7 +546,7 @@ const EVENT_HEX =
 
 function buzzDeepLinkUrlTransform(value, key) {
   if (key !== "href") return defaultUrlTransform(value);
-  if (isMessageLink(value)) return value;
+  if (isMessageLink(value) || isChannelLink(value)) return value;
   if (parseEntityLink(value).ok) return value;
   return defaultUrlTransform(value);
 }
@@ -578,6 +579,23 @@ test("messageLinkUrlTransform: preserves buzz://message href with thread", () =>
     "[link](buzz://message?channel=c1&id=m1&thread=t1)",
   );
   assert.match(html, /href="buzz:\/\/message\?[^"]*thread=t1"/);
+});
+
+test("messageLinkUrlTransform: preserves buzz://channel href", () => {
+  const html = renderMarkdown(
+    "Click [here](buzz://channel/580ca78b-9dae-46f3-8854-bd671853ba32)",
+  );
+  assert.match(
+    html,
+    /href="buzz:\/\/channel\/580ca78b-9dae-46f3-8854-bd671853ba32"/,
+  );
+});
+
+test("messageLinkUrlTransform: rejects malformed buzz://channel href", () => {
+  const html = renderMarkdown(
+    "Click [here](buzz://channel/580ca78b-9dae-46f3-8854-bd671853ba32?extra=true)",
+  );
+  assert.match(html, /href=""/);
 });
 
 test("messageLinkUrlTransform: still strips javascript: scheme", () => {
