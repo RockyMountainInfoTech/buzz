@@ -834,6 +834,16 @@ test.describe("community rail", () => {
 
     // The app settles into the new community once apply completes.
     await expect(buttonB).toHaveAttribute("aria-current", "true");
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            window.__BUZZ_E2E_COMMANDS__?.filter(
+              (command) => command === "clear_pending_navigation_deep_links",
+            ).length ?? 0,
+        ),
+      )
+      .toBe(1);
   });
 
   test("leaving the final community returns to setup without resetting identity", async ({

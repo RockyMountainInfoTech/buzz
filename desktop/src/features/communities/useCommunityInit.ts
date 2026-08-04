@@ -130,7 +130,7 @@ export function useCommunityInit(
             saveActiveAgentTurnsForCommunity(prevCommunityIdRef.current);
             prevCommunityIdRef.current = null;
           }
-          resetCommunityState({ resetAvatarState: true });
+          await resetCommunityState({ resetAvatarState: true });
           appliedRelayUrlRef.current = null;
           hasInitializedRef.current = false;
         }
