@@ -128,10 +128,11 @@ export function renderEntityLinkAnchor({
   if (!asChip) {
     return (
       <BuzzInlineLink
+        href={href}
         title={href}
         aria-label={presentation.ariaLabel}
         interactive={interactive}
-        onClick={() => onOpenEntityLink(parsed.value)}
+        onOpenLink={() => onOpenEntityLink(parsed.value)}
       >
         {children}
       </BuzzInlineLink>
@@ -141,11 +142,12 @@ export function renderEntityLinkAnchor({
   return (
     <BuzzLinkChip
       data-buzz-link-kind={parsed.value.type}
+      href={href}
       icon={presentation.icon}
       title={href}
       aria-label={presentation.ariaLabel}
       interactive={interactive}
-      onClick={() => onOpenEntityLink(parsed.value)}
+      onOpenLink={() => onOpenEntityLink(parsed.value)}
     >
       {presentation.label}
     </BuzzLinkChip>

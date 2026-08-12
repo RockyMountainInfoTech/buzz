@@ -1390,7 +1390,7 @@ export function createMarkdownComponents(
           <BuzzInlineLink
             title={href}
             interactive={interactive}
-            onClick={() => onOpenMessageLink(messageLinkTarget.link)}
+            onOpenLink={() => onOpenMessageLink(messageLinkTarget.link)}
           >
             {children}
           </BuzzInlineLink>

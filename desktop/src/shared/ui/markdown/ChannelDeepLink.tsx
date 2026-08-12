@@ -1,7 +1,10 @@
 import type * as React from "react";
 import { Hash } from "lucide-react";
 
-import { parseChannelLink } from "@/features/messages/lib/channelLink";
+import {
+  buildChannelLink,
+  parseChannelLink,
+} from "@/features/messages/lib/channelLink";
 
 import { BuzzInlineLink, BuzzLinkChip } from "./BuzzLinkChip";
 import { useMarkdownRuntime } from "./runtimeContext";
@@ -29,10 +32,11 @@ export function ChannelDeepLinkAnchor({
   if (authoredLabel !== href) {
     return (
       <BuzzInlineLink
+        href={href}
         title={href}
         aria-label={`Open channel: ${authoredLabel}`}
         interactive={interactive}
-        onClick={() => onOpenChannel(parsed.value.channelId)}
+        onOpenLink={() => onOpenChannel(parsed.value.channelId)}
       >
         {children}
       </BuzzInlineLink>
@@ -41,11 +45,12 @@ export function ChannelDeepLinkAnchor({
   const label = channelPermalinkLabel(channels, parsed.value.channelId);
   return (
     <BuzzLinkChip
+      href={href}
       icon={Hash}
       title={href}
       aria-label={`Open channel ${label}`}
       interactive={interactive}
-      onClick={() => onOpenChannel(parsed.value.channelId)}
+      onOpenLink={() => onOpenChannel(parsed.value.channelId)}
     >
       {label}
     </BuzzLinkChip>
@@ -67,11 +72,12 @@ export function MarkdownChannelDeepLink({
   return (
     <BuzzLinkChip
       data-channel-deep-link=""
+      href={href}
       icon={Hash}
       title={href}
       aria-label={`Open channel ${label}`}
       interactive={interactive}
-      onClick={() => onOpenChannel(parsed.value.channelId)}
+      onOpenLink={() => onOpenChannel(parsed.value.channelId)}
     >
       {label}
     </BuzzLinkChip>
@@ -96,12 +102,13 @@ export function MarkdownChannelReference({
   return (
     <BuzzLinkChip
       data-channel-link=""
+      href={channel ? buildChannelLink(channel.id) : undefined}
       icon={Hash}
       aria-label={
         channel ? `Open channel ${channelName}` : `Channel ${channelName}`
       }
       interactive={Boolean(channel) && interactive}
-      onClick={() => {
+      onOpenLink={() => {
         if (channel) onOpenChannel(channel.id);
       }}
     >

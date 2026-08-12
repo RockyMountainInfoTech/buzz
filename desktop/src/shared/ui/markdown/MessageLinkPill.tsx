@@ -1,6 +1,7 @@
 import * as React from "react";
 import { MessageSquare } from "lucide-react";
 
+import { buildMessageLink } from "@/features/messages/lib/messageLink";
 import { cn } from "@/shared/lib/cn";
 
 import { BuzzLinkChip } from "./BuzzLinkChip";
@@ -40,6 +41,7 @@ function segmentLinkLabel(label: string): Array<{
 
 export function MessageLinkPill({
   channels,
+  href,
   interactive,
   link,
   onOpenMessageLink,
@@ -51,6 +53,7 @@ export function MessageLinkPill({
   const channelLabel = channel?.name ?? link.channelId.slice(0, 8);
   const shortId = link.messageId.slice(0, 8);
   const isSentFromThread = variant === "sent-from-thread";
+  const permalink = href ?? buildMessageLink(link);
   const label = getMessageLinkLabel({
     channelName: channelLabel,
     threadExcerpt,
@@ -61,11 +64,12 @@ export function MessageLinkPill({
     return (
       <BuzzLinkChip
         data-message-link=""
+        href={permalink}
         icon={MessageSquare}
         aria-label={`Open message ${shortId} in channel ${channelLabel}`}
         title={label}
         interactive={interactive}
-        onClick={() => {
+        onOpenLink={() => {
           onOpenMessageLink(link);
         }}
       >

@@ -350,7 +350,7 @@ test("message links to visible root messages open the thread panel", async ({
   const link =
     "buzz://message?channel=9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50&id=mock-general-welcome";
   const composerInput = page.getByTestId("message-input");
-  await composerInput.fill("Root link repro ");
+  await composerInput.fill("Root link repro #random ");
   await composerInput.focus();
   await composerInput.evaluate((element, href) => {
     const clipboardData = new DataTransfer();
@@ -384,7 +384,41 @@ test("message links to visible root messages open the thread panel", async ({
   });
   await expect(rootThreadLink).toHaveText("general · mock-gen");
   await expect(rootThreadLink).toHaveClass(/mention-chip/);
-  await rootThreadLink.click();
+  const randomChannelLink = linkMessage.getByRole("button", {
+    name: "Open channel random",
+  });
+  await expect(randomChannelLink).toBeVisible();
+  await rootThreadLink.click({ button: "right" });
+
+  const linkMenu = page.locator("[data-buzz-link-context-menu]");
+  await expect(linkMenu).toBeVisible();
+  await randomChannelLink.click({ button: "right" });
+  await expect(linkMenu).toHaveCount(1);
+  await rootThreadLink.click({ button: "right" });
+  await expect(linkMenu).toHaveCount(1);
+  await expect(
+    linkMenu.getByRole("button", { name: "Open link" }),
+  ).toBeVisible();
+  await linkMenu.getByRole("button", { name: "Copy link" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        return (
+          window as Window & {
+            __BUZZ_E2E_COMMAND_LOG__?: Array<{
+              command: string;
+              payload: { text?: string };
+            }>;
+          }
+        ).__BUZZ_E2E_COMMAND_LOG__?.findLast(
+          ({ command }) => command === "copy_text_to_clipboard",
+        )?.payload.text;
+      }),
+    )
+    .toBe(link);
+
+  await rootThreadLink.click({ button: "right" });
+  await linkMenu.getByRole("button", { name: "Open link" }).click();
 
   const threadPanel = page.getByTestId("message-thread-panel");
   await expect(threadPanel).toBeVisible();

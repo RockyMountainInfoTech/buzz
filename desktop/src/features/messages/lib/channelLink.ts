@@ -11,6 +11,13 @@ export type ChannelLinkParseResult =
   | { ok: true; value: ParsedChannelLink }
   | { ok: false; reason: string };
 
+export function buildChannelLink(channelId: string): string {
+  if (!channelId) {
+    throw new Error("buildChannelLink: channelId is required");
+  }
+  return `${CHANNEL_LINK_SCHEME}//${CHANNEL_LINK_HOST}/${encodeURIComponent(channelId)}`;
+}
+
 export function parseChannelLink(url: string): ChannelLinkParseResult {
   let parsed: URL;
   try {
