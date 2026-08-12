@@ -5,7 +5,11 @@ import type { RelayEvent } from "@/shared/api/types";
 import { emojiAvatarDataUrl } from "@/features/profile/ui/ProfileAvatarEditor.utils";
 
 import { waitForAnimations } from "../helpers/animations";
-import { installMockBridge, TEST_IDENTITIES } from "../helpers/bridge";
+import {
+  createMockAgentMemoryListing,
+  installMockBridge,
+  TEST_IDENTITIES,
+} from "../helpers/bridge";
 
 function createCatalogEvent(input: {
   ownerPubkey: string;
@@ -2582,8 +2586,9 @@ test("duplicate instances stay visible in the gallery and agent profile", async 
 }) => {
   const personaId = "custom:duplicate-auditor";
   const primaryPubkey = TEST_IDENTITIES.alice.pubkey;
-  const additionalPubkey = TEST_IDENTITIES.charlie.pubkey;
+  const additionalPubkey = TEST_IDENTITIES.outsider.pubkey;
   await installMockBridge(page, {
+    agentMemory: createMockAgentMemoryListing(),
     personas: [
       {
         id: personaId,
@@ -2603,6 +2608,14 @@ test("duplicate instances stay visible in the gallery and agent profile", async 
         name: "Duplicate Auditor",
         personaId,
         status: "stopped",
+        channelNames: ["general", "random"],
+      },
+    ],
+    relayAgents: [
+      {
+        pubkey: additionalPubkey,
+        name: "Duplicate Auditor",
+        channelNames: ["general", "random"],
       },
     ],
   });
@@ -2615,6 +2628,7 @@ test("duplicate instances stay visible in the gallery and agent profile", async 
   ).toBeVisible();
 
   await page.getByTestId(`managed-agent-${primaryPubkey}`).click();
+  await page.getByTestId("user-profile-tab-runtime").click();
   await page.getByTestId("user-profile-instances").click();
   await page.getByTestId(`user-profile-instance-${additionalPubkey}`).click();
 
@@ -2627,7 +2641,17 @@ test("duplicate instances stay visible in the gallery and agent profile", async 
     page.getByTestId("user-profile-duplicate-agent-row"),
   ).toBeVisible();
   await expect(page.getByTestId("user-profile-export-agent-row")).toBeVisible();
-  await expect(
-    page.getByTestId(`user-profile-agent-delete-${additionalPubkey}`),
-  ).toHaveCount(0);
+  await page.getByTestId("user-profile-delete-agent-row").click();
+
+  const deleteDialog = page.getByTestId("agent-delete-confirm-dialog");
+  await expect(deleteDialog).toBeVisible();
+  await expect(deleteDialog.getByRole("heading")).toHaveText(
+    "Delete Duplicate Auditor?",
+  );
+  await expect(page.getByTestId("agent-delete-memory-count")).toHaveText("9");
+  await expect(page.getByTestId("agent-delete-channel-count")).toHaveText("2");
+
+  await page.getByTestId("agent-delete-export-action").click();
+  await expect(deleteDialog).toHaveCount(0);
+  await expect(page.getByTestId("agent-snapshot-export-dialog")).toBeVisible();
 });

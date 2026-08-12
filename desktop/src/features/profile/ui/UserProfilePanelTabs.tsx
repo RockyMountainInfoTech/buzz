@@ -192,6 +192,7 @@ export function ProfileInfoTabContent({
   canArchiveAgent,
   canDeleteAgent,
   callerChannelId,
+  channelCount,
   channelIdToName,
   isArchived,
   isDeleteAgentPending,
@@ -212,6 +213,7 @@ export function ProfileInfoTabContent({
   canArchiveAgent: boolean;
   canDeleteAgent: boolean;
   callerChannelId: string | null;
+  channelCount: number;
   channelIdToName: Record<string, string>;
   isArchived: boolean;
   isDeleteAgentPending: boolean;
@@ -297,6 +299,7 @@ export function ProfileInfoTabContent({
         canDeleteAgent={canDeleteAgent}
         isDeletePending={isDeleteAgentPending}
         managedAgent={managedAgent}
+        channelCount={channelCount}
         onDeleteAgent={onDeleteAgent}
         onDuplicateAgent={onDuplicateAgent}
         onExportAgent={onExportAgent}

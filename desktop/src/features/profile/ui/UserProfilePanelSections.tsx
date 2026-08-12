@@ -528,6 +528,7 @@ export function ProfileSummaryView({
                 canArchiveAgent={isBot && archiveActions.canArchive}
                 canDeleteAgent={canDeleteAgent}
                 callerChannelId={callerChannelId}
+                channelCount={channelCount}
                 channelIdToName={channelIdToName}
                 isArchived={isArchived}
                 isDeleteAgentPending={isAgentActionPending}
