@@ -158,23 +158,41 @@ ChannelDeepLink? parseChannelDeepLink(Uri uri) {
 
 /// Parse a `buzz://message?…` URI into a [MessageDeepLink].
 ///
-/// Returns `null` for non-`buzz` schemes, non-`message` hosts (e.g.
-/// `buzz://connect` which is desktop-only), or links missing a non-empty
-/// `channel` or `id` param.
+/// Returns `null` unless the URI exactly matches the canonical message-link
+/// shape: no path, fragment, credentials, duplicate or unknown parameters; a
+/// UUID channel; and 64-character hexadecimal message/thread event IDs.
 MessageDeepLink? parseMessageDeepLink(Uri uri) {
   if (uri.scheme != 'buzz' || uri.host != 'message') return null;
-
-  final channel = uri.queryParameters['channel'];
-  final id = uri.queryParameters['id'];
-  if (channel == null || channel.isEmpty || id == null || id.isEmpty) {
+  if (uri.path.isNotEmpty || uri.hasFragment || uri.userInfo.isNotEmpty) {
     return null;
   }
 
+  const allowedParams = {'channel', 'id', 'thread'};
+  if (uri.queryParametersAll.keys.any((key) => !allowedParams.contains(key)) ||
+      uri.queryParametersAll.values.any((values) => values.length != 1)) {
+    return null;
+  }
+
+  final channel = uri.queryParameters['channel'];
+  final id = uri.queryParameters['id'];
   final thread = uri.queryParameters['thread'];
+  final uuid = RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+    caseSensitive: false,
+  );
+  final eventId = RegExp(r'^[0-9a-f]{64}$', caseSensitive: false);
+  if (channel == null ||
+      !uuid.hasMatch(channel) ||
+      id == null ||
+      !eventId.hasMatch(id) ||
+      (thread != null && !eventId.hasMatch(thread))) {
+    return null;
+  }
+
   return MessageDeepLink(
-    channelId: channel,
-    messageId: id,
-    threadRootId: (thread == null || thread.isEmpty) ? null : thread,
+    channelId: channel.toLowerCase(),
+    messageId: id.toLowerCase(),
+    threadRootId: thread?.toLowerCase(),
   );
 }
 

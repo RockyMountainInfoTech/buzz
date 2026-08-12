@@ -7,61 +7,45 @@ void main() {
   _buildMessageLinkTests();
 
   group('parseMessageDeepLink', () {
-    test('parses channel and id', () {
-      final link = parseMessageDeepLink(
-        Uri.parse('buzz://message?channel=d14cd131&id=abc123'),
-      );
+    const channel = '580ca78b-9dae-46f3-8854-bd671853ba32';
+    const id =
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const thread =
+        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+    test('parses canonical channel, id, and optional thread', () {
       expect(
-        link,
-        const MessageDeepLink(channelId: 'd14cd131', messageId: 'abc123'),
+        parseMessageDeepLink(
+          Uri.parse('buzz://message?channel=$channel&id=$id&thread=$thread'),
+        ),
+        const MessageDeepLink(
+          channelId: channel,
+          messageId: id,
+          threadRootId: thread,
+        ),
       );
     });
 
-    test('parses optional thread param', () {
-      final link = parseMessageDeepLink(
-        Uri.parse('buzz://message?channel=d14cd131&id=abc123&thread=root99'),
-      );
-      expect(link?.threadRootId, 'root99');
-    });
-
-    test('treats empty thread as absent', () {
-      final link = parseMessageDeepLink(
-        Uri.parse('buzz://message?channel=d14cd131&id=abc123&thread='),
-      );
-      expect(link, isNotNull);
-      expect(link?.threadRootId, isNull);
-    });
-
-    test('rejects missing channel', () {
-      expect(parseMessageDeepLink(Uri.parse('buzz://message?id=abc')), isNull);
-    });
-
-    test('rejects empty channel', () {
-      expect(
-        parseMessageDeepLink(Uri.parse('buzz://message?channel=&id=abc')),
-        isNull,
-      );
-    });
-
-    test('rejects missing id', () {
-      expect(
-        parseMessageDeepLink(Uri.parse('buzz://message?channel=d14cd131')),
-        isNull,
-      );
-    });
-
-    test('rejects non-buzz scheme', () {
-      expect(
-        parseMessageDeepLink(Uri.parse('https://message?channel=a&id=b')),
-        isNull,
-      );
-    });
-
-    test('rejects non-message host (connect is desktop-only)', () {
-      expect(
-        parseMessageDeepLink(Uri.parse('buzz://connect?relay=wss://x')),
-        isNull,
-      );
+    test('rejects malformed or ambiguous forms', () {
+      for (final url in [
+        'buzz://message?id=$id',
+        'buzz://message?channel=&id=$id',
+        'buzz://message?channel=$channel',
+        'https://message?channel=$channel&id=$id',
+        'buzz://connect?channel=$channel&id=$id',
+        'buzz://message/path?channel=$channel&id=$id',
+        'buzz://message?channel=$channel&id=$id#fragment',
+        'buzz://user@message?channel=$channel&id=$id',
+        'buzz://message?channel=$channel&id=$id&extra=true',
+        'buzz://message?channel=$channel&channel=$channel&id=$id',
+        'buzz://message?channel=$channel&id=$id&id=$id',
+        'buzz://message?channel=$channel&id=$id&thread=',
+        'buzz://message?channel=not-a-uuid&id=$id',
+        'buzz://message?channel=$channel&id=not-hex',
+        'buzz://message?channel=$channel&id=$id&thread=not-hex',
+      ]) {
+        expect(parseMessageDeepLink(Uri.parse(url)), isNull, reason: url);
+      }
     });
   });
 }
@@ -299,46 +283,57 @@ void _buildMessageLinkTests() {
   group('buildMessageLink', () {
     test('builds channel + id link', () {
       expect(
-        buildMessageLink(channelId: 'd14cd131', messageId: 'abc123'),
-        'buzz://message?channel=d14cd131&id=abc123',
+        buildMessageLink(
+          channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
+          messageId:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        ),
+        'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       );
     });
 
     test('includes thread root when present', () {
       expect(
         buildMessageLink(
-          channelId: 'd14cd131',
-          messageId: 'abc123',
-          threadRootId: 'root99',
+          channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
+          messageId:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          threadRootId:
+              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
         ),
-        'buzz://message?channel=d14cd131&id=abc123&thread=root99',
+        'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&thread=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       );
     });
 
     test('treats empty thread root as absent', () {
       expect(
         buildMessageLink(
-          channelId: 'd14cd131',
-          messageId: 'abc123',
+          channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
+          messageId:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           threadRootId: '',
         ),
-        'buzz://message?channel=d14cd131&id=abc123',
+        'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       );
     });
 
     test('round-trips through parseMessageDeepLink', () {
       final url = buildMessageLink(
-        channelId: 'chan-1',
-        messageId: 'msg-1',
-        threadRootId: 'root-1',
+        channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
+        messageId:
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        threadRootId:
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       );
       final parsed = parseMessageDeepLink(Uri.parse(url));
       expect(
         parsed,
         const MessageDeepLink(
-          channelId: 'chan-1',
-          messageId: 'msg-1',
-          threadRootId: 'root-1',
+          channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
+          messageId:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          threadRootId:
+              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
         ),
       );
     });

@@ -446,7 +446,7 @@ void main() {
 
       testWidgets('renders and routes a buzz message link', (tester) async {
         const url =
-            'buzz://message?channel=channel-1&id=message-2&thread=root-1';
+            'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&thread=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
 
         await tester.pumpWidget(
           _testable(const MessageContent(content: '[Open message]($url)')),
@@ -462,15 +462,18 @@ void main() {
         expect(
           container.read(pendingDeepLinkProvider),
           const MessageDeepLink(
-            channelId: 'channel-1',
-            messageId: 'message-2',
-            threadRootId: 'root-1',
+            channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
+            messageId:
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            threadRootId:
+                'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
           ),
         );
       });
 
       testWidgets('renders and routes bare Buzz message links', (tester) async {
-        const url = 'buzz://message?channel=channel-1&id=message-1';
+        const url =
+            'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
         await tester.pumpWidget(
           _testable(const MessageContent(content: 'See $url now')),
@@ -485,14 +488,19 @@ void main() {
         );
         expect(
           container.read(pendingDeepLinkProvider),
-          const MessageDeepLink(channelId: 'channel-1', messageId: 'message-1'),
+          const MessageDeepLink(
+            channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
+            messageId:
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          ),
         );
       });
 
       testWidgets('keeps Markdown delimiters outside bare Buzz links', (
         tester,
       ) async {
-        const url = 'buzz://message?channel=channel-1&id=message-1';
+        const url =
+            'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
         await tester.pumpWidget(
           _testable(const MessageContent(content: '**$url**. and _${url}_')),
@@ -507,14 +515,19 @@ void main() {
         );
         expect(
           container.read(pendingDeepLinkProvider),
-          const MessageDeepLink(channelId: 'channel-1', messageId: 'message-1'),
+          const MessageDeepLink(
+            channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
+            messageId:
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          ),
         );
       });
 
       testWidgets('keeps non-adjacent Markdown delimiters outside links', (
         tester,
       ) async {
-        const url = 'buzz://message?channel=channel-1&id=message-1';
+        const url =
+            'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
         await tester.pumpWidget(
           _testable(
@@ -537,8 +550,9 @@ void main() {
           expect(
             container.read(pendingDeepLinkProvider),
             const MessageDeepLink(
-              channelId: 'channel-1',
-              messageId: 'message-1',
+              channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
+              messageId:
+                  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
             ),
           );
           container.read(pendingDeepLinkProvider.notifier).state = null;
@@ -548,7 +562,8 @@ void main() {
       testWidgets('excludes sentence punctuation from bare Buzz links', (
         tester,
       ) async {
-        const messageUrl = 'buzz://message?channel=channel-1&id=message-1';
+        const messageUrl =
+            'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
         const joinUrl =
             'buzz://join?relay=wss%3A%2F%2Frelay.example.com&code=invite-1';
 
@@ -572,7 +587,11 @@ void main() {
         );
         expect(
           container.read(pendingDeepLinkProvider),
-          const MessageDeepLink(channelId: 'channel-1', messageId: 'message-1'),
+          const MessageDeepLink(
+            channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
+            messageId:
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          ),
         );
 
         await tester.tap(find.text(joinUrl));
@@ -589,7 +608,8 @@ void main() {
       testWidgets('renders and routes autolinked Buzz thread links', (
         tester,
       ) async {
-        const url = 'buzz://message?channel=channel-1&id=reply-1&thread=root-1';
+        const url =
+            'buzz://message?channel=580ca78b-9dae-46f3-8854-bd671853ba32&id=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc&thread=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
 
         await tester.pumpWidget(
           _testable(const MessageContent(content: '<$url>')),
@@ -605,9 +625,11 @@ void main() {
         expect(
           container.read(pendingDeepLinkProvider),
           const MessageDeepLink(
-            channelId: 'channel-1',
-            messageId: 'reply-1',
-            threadRootId: 'root-1',
+            channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
+            messageId:
+                'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+            threadRootId:
+                'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
           ),
         );
       });
@@ -733,7 +755,8 @@ void main() {
       testWidgets('leaves malformed Buzz channel forms as plain text', (
         tester,
       ) async {
-        const url = 'buzz://channel?channel=channel-1';
+        const url =
+            'buzz://channel?channel=580ca78b-9dae-46f3-8854-bd671853ba32';
 
         await tester.pumpWidget(
           _testable(const MessageContent(content: 'See $url now')),
