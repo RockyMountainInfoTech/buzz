@@ -301,3 +301,69 @@ test("resolvePersonaInstances_agent_without_persona_returns_only_itself", () => 
     solo,
   ]);
 });
+
+// ── Finding 4: loading→hydrated seam ────────────────────────────────────────
+//
+// The persona card's main click serializes a PERSONA target (persona.id), not a
+// pubkey. A persona target is re-resolved every render, so a pick made during
+// the archive-query fail-open window self-corrects after the snapshot hydrates.
+// These compose the transition the steady-state tests above cover separately.
+
+test("resolveProfileManagedAgent_persona_target_retargets_from_archived_to_live_after_hydration", () => {
+  const archived = agent({ pubkey: archivedPk });
+  const live = agent({ pubkey: livePk });
+  const agents = [archived, live]; // archived first in file order
+  const target = { persona: { id: "persona-1" } };
+
+  // Fail-open (snapshot loading): resolves to the first sibling — transiently
+  // the archived one, indistinguishable from live until the snapshot arrives.
+  assert.equal(
+    resolveProfileManagedAgent(agents, target, neverArchived),
+    archived,
+  );
+  // After hydration the SAME target retargets to the live sibling.
+  assert.equal(
+    resolveProfileManagedAgent(agents, target, isArchivedIn(archivedPk)),
+    live,
+  );
+});
+
+test("resolveProfileManagedAgent_persona_target_becomes_persona_only_when_all_archived_after_hydration", () => {
+  const first = agent({ pubkey: archivedPk });
+  const second = agent({ pubkey: livePk });
+  const agents = [first, second];
+  const target = { persona: { id: "persona-1" } };
+
+  assert.equal(
+    resolveProfileManagedAgent(agents, target, neverArchived),
+    first,
+  );
+  // After hydration every sibling is archived: undefined -> panel renders
+  // persona-only, never an archived identity.
+  assert.equal(
+    resolveProfileManagedAgent(
+      agents,
+      target,
+      isArchivedIn(archivedPk, livePk),
+    ),
+    undefined,
+  );
+});
+
+test("resolveProfileManagedAgent_pubkey_target_stays_archived_after_hydration", () => {
+  // Contrast documenting finding 4: a durable pubkey target — what the card
+  // used to serialize — preserves the archived record verbatim even after
+  // hydration. That is precisely why the card routes through a persona target
+  // instead. The explicit-pubkey branch is deliberately unchanged (manage/
+  // unarchive access from instance rows and channel-members navigation).
+  const archived = agent({ pubkey: archivedPk });
+  const live = agent({ pubkey: livePk });
+  assert.equal(
+    resolveProfileManagedAgent(
+      [archived, live],
+      { pubkey: archivedPk },
+      isArchivedIn(archivedPk),
+    ),
+    archived,
+  );
+});

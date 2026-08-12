@@ -10,7 +10,9 @@ type ProfilePanelContextValue = {
   openProfilePanel:
     | ((pubkey: string, options?: ProfilePanelOpenOptions) => void)
     | null;
-  openPersonaProfilePanel: ((persona: AgentPersona) => void) | null;
+  openPersonaProfilePanel:
+    | ((persona: AgentPersona, options?: ProfilePanelOpenOptions) => void)
+    | null;
 };
 
 const ProfilePanelContext = React.createContext<ProfilePanelContextValue>({
@@ -28,7 +30,10 @@ export function ProfilePanelProvider({
     pubkey: string,
     options?: ProfilePanelOpenOptions,
   ) => void;
-  onOpenPersonaProfilePanel?: (persona: AgentPersona) => void;
+  onOpenPersonaProfilePanel?: (
+    persona: AgentPersona,
+    options?: ProfilePanelOpenOptions,
+  ) => void;
 }) {
   const value = React.useMemo(
     () => ({

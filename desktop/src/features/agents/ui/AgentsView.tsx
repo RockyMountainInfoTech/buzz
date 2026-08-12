@@ -226,8 +226,8 @@ export function AgentsView() {
               onOpenAgentProfile={(pubkey, options) => {
                 openProfilePanel?.(pubkey, options);
               }}
-              onOpenPersonaProfile={(persona) => {
-                openPersonaProfilePanel?.(persona);
+              onOpenPersonaProfile={(persona, options) => {
+                openPersonaProfilePanel?.(persona, options);
               }}
               onStartAgent={(pubkey) => {
                 void agents.handleStart(pubkey);

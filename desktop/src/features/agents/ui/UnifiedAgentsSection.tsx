@@ -36,7 +36,10 @@ type UnifiedAgentsSectionProps = {
     pubkey: string,
     options?: ProfilePanelOpenOptions,
   ) => void;
-  onOpenPersonaProfile: (persona: AgentPersona) => void;
+  onOpenPersonaProfile: (
+    persona: AgentPersona,
+    options?: ProfilePanelOpenOptions,
+  ) => void;
   onRestartAgent: (pubkey: string) => void;
   onStartAgent: (pubkey: string) => void;
   onStartPersona: (persona: AgentPersona) => void;
@@ -246,7 +249,10 @@ function AgentPersonaCard({
     pubkey: string,
     options?: ProfilePanelOpenOptions,
   ) => void;
-  onOpenPersonaProfile: (persona: AgentPersona) => void;
+  onOpenPersonaProfile: (
+    persona: AgentPersona,
+    options?: ProfilePanelOpenOptions,
+  ) => void;
   onRestartAgent: (pubkey: string) => void;
   onStartAgent: (pubkey: string) => void;
   onStartPersona: (persona: AgentPersona) => void;
@@ -313,14 +319,17 @@ function AgentPersonaCard({
       label={title}
       modelLabel={modelLabel}
       onClick={() => {
-        if (agent) {
-          onOpenAgentProfile(
-            agent.pubkey,
-            opensRuntimeTab ? { tab: "runtime" } : undefined,
-          );
-          return;
-        }
-        onOpenPersonaProfile(persona);
+        // The card's main click always opens the PERSONA target, never an
+        // explicit pubkey. A pubkey target is durable in the URL, so a pick
+        // made during the archive-query fail-open window would strand the
+        // panel on an archived identity after hydration. A persona target
+        // re-resolves every render, so it self-corrects to a live sibling
+        // (or persona-only when all are archived). Explicit-pubkey navigation
+        // stays reserved for deliberate instance rows and the error path.
+        onOpenPersonaProfile(
+          persona,
+          opensRuntimeTab ? { tab: "runtime" } : undefined,
+        );
       }}
       statusBadge={
         agent?.personaOrphaned ? (

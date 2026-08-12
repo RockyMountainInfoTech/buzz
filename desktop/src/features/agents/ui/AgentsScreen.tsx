@@ -79,11 +79,11 @@ export function AgentsScreen() {
   );
 
   const handleOpenPersonaProfilePanel = React.useCallback(
-    (persona: AgentPersona) => {
+    (persona: AgentPersona, options?: ProfilePanelOpenOptions) => {
       applyPatch({
         profile: null,
         profilePersona: persona.id,
-        profileTab: null,
+        profileTab: options?.tab === "info" ? null : (options?.tab ?? null),
         profileView: null,
       });
     },
