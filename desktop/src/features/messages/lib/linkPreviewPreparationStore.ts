@@ -12,11 +12,12 @@ import {
 } from "@/shared/lib/useResolvedLinkPreviews";
 
 const POST_SUBMIT_PREVIEW_BUDGET_MS = 3_000;
-const SUPPRESSION_TAG = ["link-preview", "none"];
+const SETTLED_PREVIEW_JOB_TTL_MS = 5 * 60_000;
 
 type PreviewJob = {
   promise: Promise<string[] | null>;
   settled: boolean;
+  settledAt: number | null;
 };
 
 type BackgroundPreviewTask = {
@@ -101,6 +102,13 @@ async function buildSnapshot(
   });
 }
 
+function isReusableJob(job: PreviewJob, now = Date.now()): boolean {
+  return (
+    !job.settled ||
+    (job.settledAt !== null && now - job.settledAt < SETTLED_PREVIEW_JOB_TTL_MS)
+  );
+}
+
 /** Start or adopt the one preparation job for this exact canonical URL. */
 export function prepareLinkPreview(
   candidate: SupportedLinkPreview,
@@ -112,11 +120,15 @@ export function prepareLinkPreview(
     return Promise.resolve(null);
   }
   const existing = jobs.get(candidate.href);
-  if (existing) return existing.promise;
+  if (existing && isReusableJob(existing)) {
+    return existing.promise;
+  }
+  if (existing) jobs.delete(candidate.href);
 
   const job: PreviewJob = {
     promise: Promise.resolve(null),
     settled: false,
+    settledAt: null,
   };
   job.promise = buildSnapshot(candidate)
     .catch(() => null)
@@ -128,6 +140,7 @@ export function prepareLinkPreview(
     })
     .finally(() => {
       job.settled = true;
+      job.settledAt = Date.now();
     });
   jobs.set(candidate.href, job);
   return job.promise;
@@ -154,10 +167,9 @@ export function prepareBackgroundLinkPreviews(
   );
   if (!pending) {
     return {
-      promise: Promise.all(external.map(prepareLinkPreview)).then((tags) => {
-        const ready = tags.filter((tag): tag is string[] => tag !== null);
-        return ready.length === external.length ? ready : [SUPPRESSION_TAG];
-      }),
+      promise: Promise.all(external.map(prepareLinkPreview)).then((tags) =>
+        tags.filter((tag): tag is string[] => tag !== null),
+      ),
       skip: () => undefined,
     };
   }
@@ -177,14 +189,13 @@ export function prepareBackgroundLinkPreviews(
   const promise = new Promise<string[][]>((resolve) => {
     finish = resolve;
   });
-  const skip = () => complete([SUPPRESSION_TAG]);
+  const skip = () => complete([]);
   tasks.set(taskId, { id: taskId, skip });
   publishSnapshot();
 
   timer = setTimeout(skip, timeoutMs);
   void Promise.all(external.map(prepareLinkPreview)).then((tags) => {
-    const ready = tags.filter((tag): tag is string[] => tag !== null);
-    complete(ready.length === external.length ? ready : [SUPPRESSION_TAG]);
+    complete(tags.filter((tag): tag is string[] => tag !== null));
   });
 
   return { promise, skip };
@@ -213,6 +224,7 @@ export function useBackgroundLinkPreviewPreparation(): BackgroundPreviewSnapshot
 }
 
 export const __linkPreviewPreparationTest = {
+  isReusableJob,
   jobs,
   reset: resetLinkPreviewPreparations,
 };
