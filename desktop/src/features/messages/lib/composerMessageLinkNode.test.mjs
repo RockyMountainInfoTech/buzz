@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import test from "node:test";
 
 import {
+  ComposerMessageLinkNode,
   registerComposerMessageLinkMarkdownIt,
   resolveComposerMessageLinkAttributes,
 } from "./composerMessageLinkNode.ts";
@@ -123,6 +124,30 @@ test("markdown parsing stops message links before emphasis delimiters", () => {
   assert.equal(rule(state, false), true);
   assert.equal(state.pos, HREF.length);
   assert.deepEqual(token.meta, { channelName: "general", href: HREF });
+});
+
+test("composer node uses the sent-message chip presentation", () => {
+  const node = {
+    attrs: { channelName: "general", href: HREF },
+  };
+  const rendered = globalThis.structuredClone(
+    // TipTap invokes renderHTML with the extension instance as `this`.
+    // Exercise the production renderer directly so the composer and message
+    // list cannot silently drift back to separate visual languages.
+    ComposerMessageLinkNode.config.renderHTML.call(
+      { options: { resolveChannelName: () => "general" } },
+      { HTMLAttributes: {}, node },
+    ),
+  );
+
+  assert.equal(rendered[0], "span");
+  assert.match(rendered[1].class, /mention-chip/);
+  assert.equal(rendered[1]["data-buzz-link"], "");
+  assert.equal(rendered[2][0], "span");
+  assert.match(rendered[2][1].class, /mention-chip-icon/);
+  assert.match(rendered[2][1].class, /composer-message-link-icon/);
+  assert.equal(rendered[2].length, 2);
+  assert.equal(rendered[3], "general · root-eve");
 });
 
 test("markdown rendering stores identity in attributes, not visible id text", () => {

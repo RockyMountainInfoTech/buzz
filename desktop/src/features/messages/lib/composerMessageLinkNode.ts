@@ -4,11 +4,7 @@ import { TextSelection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 
 import { MENTION_CHIP_BASE_CLASSES } from "@/shared/ui/mentionChip";
-import {
-  getMessageLinkChannelLabel,
-  getMessageLinkLabel,
-  MESSAGE_LINK_PREFIX,
-} from "./messageLinkLabel";
+import { getMessageLinkLabel } from "./messageLinkLabel";
 import { buildMessageLink, parseMessageLink } from "./messageLink";
 
 export const COMPOSER_MESSAGE_LINK_NODE_NAME = "composerMessageLink";
@@ -194,28 +190,29 @@ export const ComposerMessageLinkNode =
           (String(node.attrs.channelName ?? "") || "channel"))
         : "channel";
       const label = getMessageLinkLabel({ channelName });
-      const channelLinkLabel = getMessageLinkChannelLabel(channelName);
+      const shortId = parsed.ok
+        ? parsed.value.messageId.slice(0, 8)
+        : "message";
       return [
         "span",
         mergeAttributes(HTMLAttributes, {
           "aria-label": label,
-          class:
-            "inline-flex min-w-0 max-w-80 items-center gap-1.5 align-baseline",
+          class: `${MENTION_CHIP_BASE_CLASSES} cursor-text`,
+          "data-buzz-link": "",
           "data-channel-name": channelName,
           "data-composer-message-link": "",
           "data-href": href,
           "data-message-link": "",
           title: label,
         }),
-        ["span", { class: "shrink-0" }, MESSAGE_LINK_PREFIX],
         [
           "span",
           {
-            class: `${MENTION_CHIP_BASE_CLASSES} min-w-0 max-w-full truncate`,
-            "data-channel-link": "",
+            "aria-hidden": "true",
+            class: "mention-chip-icon composer-message-link-icon",
           },
-          channelLinkLabel,
         ],
+        `${channelName} · ${shortId}`,
       ];
     },
 

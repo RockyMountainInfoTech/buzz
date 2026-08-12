@@ -364,11 +364,10 @@ test("message links to visible root messages open the thread panel", async ({
     );
   }, link);
   const composerLink = composerInput.locator('[data-composer-message-link=""]');
-  await expect(composerLink).toContainText("Thread in");
-  const composerChannelLink = composerLink.locator('[data-channel-link=""]');
-  await expect(composerChannelLink).toHaveText("#general");
-  await expect(composerChannelLink).toHaveClass(/mention-chip/);
-  await expect(composerLink).not.toHaveClass(/mention-chip/);
+  await expect(composerLink).toHaveText("general · mock-gen");
+  await expect(composerLink).toHaveClass(/mention-chip/);
+  await expect(composerLink.locator("svg.mention-chip-icon")).toHaveCount(1);
+  await expect(composerLink).toHaveAttribute("data-buzz-link", "");
   await expect(composerLink).toHaveAttribute("title", "Thread in #general");
   await expect(composerInput).not.toContainText("buzz://message");
   await page.getByTestId("send-message").click();
@@ -379,12 +378,9 @@ test("message links to visible root messages open the thread panel", async ({
     .last();
   await expect(linkMessage).toBeVisible();
   const rootThreadLink = linkMessage.getByRole("button", {
-    name: "Open thread in general",
+    name: "Open message mock-gen in channel general",
   });
-  await expect(linkMessage.locator('[data-message-link=""]')).toContainText(
-    "Thread in",
-  );
-  await expect(rootThreadLink).toHaveText("#general");
+  await expect(rootThreadLink).toHaveText("general · mock-gen");
   await expect(rootThreadLink).toHaveClass(/mention-chip/);
   await rootThreadLink.click();
 
@@ -453,4 +449,64 @@ test("message deep links survive reload", async ({ page }) => {
   await expect(page.getByTestId("message-timeline")).toContainText(
     "Engineering shipped the desktop build.",
   );
+});
+
+// Cold-start OS links are queued natively until AppShell mounts its router listener.
+
+test("cold-start channel deep link drains after the router mounts", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    pendingNavigationDeepLinks: [
+      {
+        id: "navigation-channel-1",
+        kind: "channel",
+        channelId: ENGINEERING_CHANNEL_ID,
+      },
+    ],
+  });
+
+  await page.goto("/");
+
+  await expect(page.getByTestId("chat-title")).toHaveText("engineering");
+  await expect(page).toHaveURL(
+    new RegExp(`#/channels/${ENGINEERING_CHANNEL_ID}$`),
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window.__BUZZ_E2E_COMMAND_LOG__ ?? []).filter(
+          (entry) =>
+            entry.command === "acknowledge_pending_navigation_deep_link",
+        ),
+      ),
+    )
+    .toEqual([
+      {
+        command: "acknowledge_pending_navigation_deep_link",
+        payload: { id: "navigation-channel-1" },
+      },
+    ]);
+});
+
+test("cold-start message deep link preserves its thread target", async ({
+  page,
+}) => {
+  await installMockBridge(page, {
+    pendingNavigationDeepLinks: [
+      {
+        id: "navigation-message-1",
+        kind: "message",
+        channelId: WATERCOLOR_CHANNEL_ID,
+        messageId: "mock-forum-release-reply",
+        threadRootId: "mock-forum-release-thread",
+      },
+    ],
+  });
+
+  await page.goto("/");
+
+  await expect(page.getByTestId("chat-title")).toHaveText("watercooler");
+  await expect(page).toHaveURL(/messageId=mock-forum-release-reply/);
+  await expect(page).toHaveURL(/threadRootId=mock-forum-release-thread/);
 });
