@@ -344,7 +344,7 @@ test("message links to visible root messages open the thread panel", async ({
   await page.getByTestId("channel-general").click();
   await expect(page.getByTestId("chat-title")).toHaveText("general");
   await expect(page.getByTestId("message-timeline")).toContainText(
-    "Welcome to #general",
+    "Welcome to general",
   );
 
   const link =
@@ -388,7 +388,7 @@ test("message links to visible root messages open the thread panel", async ({
   await expect(threadPanel).toBeVisible();
   await expect(page).toHaveURL(/thread=mock-general-welcome/);
   await expect(threadPanel.getByTestId("message-thread-head")).toContainText(
-    "Welcome to #general",
+    "Welcome to general",
   );
 });
 
@@ -403,7 +403,7 @@ test("message links reopen a closed thread when the same messageId is already in
   const threadPanel = page.getByTestId("message-thread-panel");
   await expect(threadPanel).toBeVisible();
   await expect(threadPanel.getByTestId("message-thread-head")).toContainText(
-    "Welcome to #general",
+    "Welcome to general",
   );
 
   await threadPanel.getByRole("button", { name: "Close panel" }).click();
@@ -429,7 +429,7 @@ test("message links reopen a closed thread when the same messageId is already in
 
   await expect(threadPanel).toBeVisible();
   await expect(threadPanel.getByTestId("message-thread-head")).toContainText(
-    "Welcome to #general",
+    "Welcome to general",
   );
 });
 

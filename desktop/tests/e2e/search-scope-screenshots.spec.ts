@@ -34,7 +34,7 @@ test("captures global and current-channel search scope states", async ({
   await expect(page.getByTestId("search-channel-scope-chip")).toHaveText(
     /#general/,
   );
-  await expect(searchDialog).toContainText("Welcome to #general");
+  await expect(searchDialog).toContainText("Welcome to general");
   await waitForAnimations(page);
   await searchDialog.screenshot({
     path: "test-results/search-scope/02-current-channel-scoped.png",
