@@ -278,6 +278,10 @@ type MockBridgeOptions = {
   canvasReadError?: string;
   /** Delay (ms) for `apply_workspace`; see e2eBridge mock config. */
   applyCommunityDelayMs?: number;
+  /** Only delay apply calls targeting this relay URL when set. */
+  applyCommunityDelayRelayUrl?: string;
+  /** Apply this relay as the next generation while delayed apply is in flight. */
+  applyCommunitySupersedeRelayUrl?: string;
   /** Delay (ms) for `clear_pending_navigation_deep_links`. */
   clearPendingNavigationDeepLinksDelayMs?: number;
   openDmDelayMs?: number;

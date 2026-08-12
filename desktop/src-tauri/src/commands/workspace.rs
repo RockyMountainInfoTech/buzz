@@ -1,6 +1,9 @@
 use nostr::Keys;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::Ordering;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex,
+};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::app_state::AppState;
@@ -110,6 +113,33 @@ pub async fn validate_repos_dir(dir: String) -> Result<(), String> {
     .map_err(|e| format!("spawn_blocking failed: {e}"))?
 }
 
+#[derive(Default)]
+pub struct WorkspaceTransitionState {
+    generation: AtomicU64,
+    commit: Mutex<()>,
+}
+
+impl WorkspaceTransitionState {
+    fn claim(&self, generation: u64) {
+        self.generation.fetch_max(generation, Ordering::AcqRel);
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        self.generation.load(Ordering::Acquire) == generation
+    }
+}
+
+fn workspace_transition_is_current(state: &AppState, generation: u64) -> bool {
+    state.workspace_transition.is_current(generation)
+}
+
+/// Claim ownership for a frontend workspace transition before it begins async
+/// teardown. This invalidates an older `apply_workspace` already in flight.
+#[tauri::command]
+pub fn claim_workspace_transition(generation: u64, state: State<'_, AppState>) {
+    state.workspace_transition.claim(generation);
+}
+
 /// Apply a workspace's configuration to the backend session.
 ///
 /// Called by the frontend on app init (after reload) to configure the
@@ -129,10 +159,20 @@ pub async fn apply_workspace(
     nsec: Option<String>,
     repos_dir: Option<String>,
     agent_managed_profiles: Option<bool>,
+    transition_generation: u64,
     app: AppHandle,
 ) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    // Claim newest intent before any await or blocking work. fetch_max makes a
+    // late-arriving older invocation harmless even if command scheduling is
+    // reordered across Tauri worker threads.
+    state.workspace_transition.claim(transition_generation);
+    if !workspace_transition_is_current(&state, transition_generation) {
+        return Ok(());
+    }
+
     let restore_app = app.clone();
-    tokio::task::spawn_blocking(move || {
+    let true = tokio::task::spawn_blocking(move || {
         let state = app.state::<AppState>();
 
         // ── Validate before mutating ──────────────────────────────────────────
@@ -162,6 +202,18 @@ pub async fn apply_workspace(
             },
             None => None,
         };
+
+        // Commit all synchronous state and filesystem changes under one lock.
+        // A newer command claims its generation before waiting here, so this
+        // final check prevents a superseded apply from mutating any authority.
+        let _commit_guard = state
+            .workspace_transition
+            .commit
+            .lock()
+            .map_err(|e| e.to_string())?;
+        if !workspace_transition_is_current(&state, transition_generation) {
+            return Ok::<bool, String>(false);
+        }
 
         // ── Apply all state changes (nothing below can fail) ──────────────────
         {
@@ -206,13 +258,22 @@ pub async fn apply_workspace(
 
         try_regenerate_nest(&app);
 
-        Ok::<(), String>(())
+        Ok::<bool, String>(true)
     })
     .await
-    .map_err(|e| format!("spawn_blocking failed: {e}"))??;
+    .map_err(|e| format!("spawn_blocking failed: {e}"))??
+    else {
+        return Ok(());
+    };
 
     let state = restore_app.state::<AppState>();
+    if !workspace_transition_is_current(&state, transition_generation) {
+        return Ok(());
+    }
     super::agents::provider_access::reconcile_on_workspace_apply(&restore_app, &state).await?;
+    if !workspace_transition_is_current(&state, transition_generation) {
+        return Ok(());
+    }
 
     // Backfill this exact relay+owner scope only after the workspace has been
     // applied. Running at process boot would target the fallback relay and
@@ -251,6 +312,9 @@ pub async fn apply_workspace(
         let app = restore_app.clone();
         tauri::async_runtime::spawn(async move {
             let state = app.state::<AppState>();
+            if !workspace_transition_is_current(&state, transition_generation) {
+                return;
+            }
             if restore_pending {
                 if let Err(error) =
                     crate::commands::mesh_llm::restore_mesh_sharing(&app, &state).await
@@ -259,6 +323,9 @@ pub async fn apply_workspace(
                 }
             }
             crate::mesh_llm::publish_current_status_once(&app, "workspace apply").await;
+            if !workspace_transition_is_current(&state, transition_generation) {
+                return;
+            }
             if restore_pending {
                 if let Err(error) =
                     restore_managed_agents_on_launch(&app, &state.shutdown_started).await
@@ -274,6 +341,9 @@ pub async fn apply_workspace(
         let app = restore_app.clone();
         tauri::async_runtime::spawn(async move {
             let state = app.state::<AppState>();
+            if !workspace_transition_is_current(&state, transition_generation) {
+                return;
+            }
             if let Err(error) =
                 restore_managed_agents_on_launch(&app, &state.shutdown_started).await
             {
@@ -283,4 +353,22 @@ pub async fn apply_workspace(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorkspaceTransitionState;
+
+    #[test]
+    fn newer_workspace_claim_permanently_supersedes_older_generation() {
+        let transition = WorkspaceTransitionState::default();
+        transition.claim(1);
+        assert!(transition.is_current(1));
+        transition.claim(3);
+        assert!(!transition.is_current(1));
+        assert!(transition.is_current(3));
+        transition.claim(2);
+        assert!(!transition.is_current(2));
+        assert!(transition.is_current(3));
+    }
 }

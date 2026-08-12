@@ -5,10 +5,13 @@ import { isMacPlatform } from "@/shared/lib/platform";
 import { relayClient } from "@/shared/api/relayClient";
 import { resetRateLimitGate } from "@/shared/api/relayRateLimitGate";
 import {
-  applyCommunity,
   autoConnectDefaultRelayEnabled,
   getDefaultRelayUrl,
 } from "@/shared/api/tauri";
+import {
+  applyCommunity,
+  claimWorkspaceTransition,
+} from "@/shared/api/tauriWorkspace";
 import { getIdentity } from "@/shared/api/tauriIdentity";
 import { clearTrayAgentActivity } from "@/shared/api/trayMenu";
 import { getOverrides } from "@/shared/features";
@@ -118,12 +121,21 @@ export function useCommunityInit(
   // same-relay reconnect during onboarding must not cancel that work, while an
   // actual relay boundary must clear both the queue and its presentation probe.
   const appliedRelayUrlRef = useRef<string | null>(null);
+  // Monotonic ownership token shared with Rust. Every effect claims a newer
+  // generation before asynchronous teardown/apply work can be superseded.
+  const transitionGenerationRef = useRef(0);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: we intentionally depend on specific properties (id/relayUrl/token/reposDir) — depending on the whole object would trigger resets on name-only changes
   useEffect(() => {
     let cancelled = false;
+    const transitionGeneration = ++transitionGenerationRef.current;
 
     async function init() {
+      // Publish ownership before any teardown await. This reaches the Rust
+      // authority early enough to invalidate an older apply already in flight.
+      await claimWorkspaceTransition(transitionGeneration);
+      if (cancelled) return;
+
       if (!activeCommunity) {
         if (hasInitializedRef.current) {
           if (prevCommunityIdRef.current) {
@@ -238,6 +250,7 @@ export function useCommunityInit(
           activeCommunity.token,
           activeCommunity.reposDir,
           getOverrides().agentManagedProfiles === true,
+          transitionGeneration,
         );
       } catch (error) {
         // A bad `repos_dir` no longer reaches here — `apply_workspace` treats

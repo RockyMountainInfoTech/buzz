@@ -324,6 +324,10 @@ type E2eConfig = {
     /** Delay (ms) for `apply_workspace` so e2e tests can observe the
      *  community-switch gate. 0/undefined = instant. */
     applyCommunityDelayMs?: number;
+    /** Only delay apply calls targeting this relay URL when set. */
+    applyCommunityDelayRelayUrl?: string;
+    /** Apply this relay as the next generation while delayed apply is in flight. */
+    applyCommunitySupersedeRelayUrl?: string;
     /** Delay (ms) for `clear_pending_navigation_deep_links` so e2e tests can
      *  exercise a switch superseded while native queue cleanup is pending. */
     clearPendingNavigationDeepLinksDelayMs?: number;
@@ -1123,6 +1127,10 @@ declare global {
     }>;
     /** Release a mock media proxy held at port 0 and return its ready port. */
     __BUZZ_E2E_RELEASE_MEDIA_PROXY__?: () => number;
+    __BUZZ_E2E_APPLIED_WORKSPACES__?: Array<{
+      relayUrl?: string;
+      transitionGeneration?: number;
+    }>;
     /** Release mock send events that were stored but withheld from live subscribers. */
     __BUZZ_E2E_RELEASE_SEND_MESSAGE_LIVE_ECHO__?: () => number;
     __BUZZ_E2E_EMIT_MEDIA_UPLOAD_PHASE__?: (input: {
@@ -10204,6 +10212,7 @@ export function maybeInstallE2eTauriMocks() {
     ensureRelayOriginFetch();
     return mockMediaProxyPort;
   };
+  window.__BUZZ_E2E_APPLIED_WORKSPACES__ = [];
   window.__BUZZ_E2E_EMIT_MOCK_HUDDLE_TTS_SPEAKER__ = (payload) =>
     emit("huddle-tts-speaker-level", payload);
   window.__BUZZ_E2E_SIGNED_EVENTS__ = [];
@@ -10551,6 +10560,7 @@ export function maybeInstallE2eTauriMocks() {
       deviceName: state === "running" ? "Mock desktop" : null,
     };
   };
+  let claimedWorkspaceTransitionGeneration = 0;
   let mockImportedVoices: Array<{
     key: string;
     displayName: string;
@@ -11374,13 +11384,44 @@ export function maybeInstallE2eTauriMocks() {
         }
         return activeConfig?.mock?.linkPreviewMetadata ?? null;
       }
+      case "claim_workspace_transition":
+        claimedWorkspaceTransitionGeneration = Math.max(
+          claimedWorkspaceTransitionGeneration,
+          (payload as { transitionGeneration?: number }).transitionGeneration ??
+            0,
+        );
+        return;
       case "apply_workspace": {
         const applyDelayMs = activeConfig?.mock?.applyCommunityDelayMs ?? 0;
-        if (applyDelayMs > 0) {
-          return new Promise((resolve) =>
+        const delayRelayUrl = activeConfig?.mock?.applyCommunityDelayRelayUrl;
+        const relayUrl = (payload as { relayUrl?: string }).relayUrl;
+        if (
+          applyDelayMs > 0 &&
+          (delayRelayUrl === undefined || delayRelayUrl === relayUrl)
+        ) {
+          const supersedeRelayUrl =
+            activeConfig?.mock?.applyCommunitySupersedeRelayUrl;
+          if (supersedeRelayUrl) {
+            claimedWorkspaceTransitionGeneration += 1;
+            window.__BUZZ_E2E_APPLIED_WORKSPACES__?.push({
+              relayUrl: supersedeRelayUrl,
+              transitionGeneration: claimedWorkspaceTransitionGeneration,
+            });
+          }
+          await new Promise((resolve) =>
             window.setTimeout(resolve, applyDelayMs),
           );
         }
+        const transitionGeneration = (
+          payload as { transitionGeneration?: number }
+        ).transitionGeneration;
+        if (transitionGeneration !== claimedWorkspaceTransitionGeneration) {
+          return;
+        }
+        window.__BUZZ_E2E_APPLIED_WORKSPACES__?.push({
+          relayUrl,
+          transitionGeneration,
+        });
         return;
       }
       case "update_tray_agent_activity":

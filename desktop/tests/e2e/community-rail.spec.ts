@@ -902,6 +902,50 @@ test.describe("community rail", () => {
       .toEqual([COMMUNITY_A.relayUrl, COMMUNITY_C.relayUrl]);
   });
 
+  test("superseding an in-flight workspace apply gives the newest switch ownership", async ({
+    page,
+  }) => {
+    await installMockBridge(
+      page,
+      {
+        applyCommunityDelayMs: 800,
+        applyCommunityDelayRelayUrl: COMMUNITY_B.relayUrl,
+        applyCommunitySupersedeRelayUrl: COMMUNITY_C.relayUrl,
+      },
+      { skipCommunitySeed: true },
+    );
+    await seedCommunities(
+      page,
+      [COMMUNITY_A, COMMUNITY_B, COMMUNITY_C],
+      COMMUNITY_A.id,
+    );
+    await page.goto("/");
+
+    const buttonB = page.getByTestId(`community-rail-button-${COMMUNITY_B.id}`);
+    await expect(buttonB).toBeVisible();
+    await buttonB.click();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          (relayUrl) =>
+            (window.__BUZZ_E2E_COMMAND_LOG__ ?? []).some(
+              ({ command, payload }) =>
+                command === "apply_workspace" &&
+                (payload as { relayUrl?: string }).relayUrl === relayUrl,
+            ),
+          COMMUNITY_B.relayUrl,
+        ),
+      )
+      .toBe(true);
+
+    await expect
+      .poll(() => page.evaluate(() => window.__BUZZ_E2E_APPLIED_WORKSPACES__))
+      .toEqual([
+        { relayUrl: COMMUNITY_A.relayUrl, transitionGeneration: 1 },
+        { relayUrl: COMMUNITY_C.relayUrl, transitionGeneration: 3 },
+      ]);
+  });
+
   test("leaving the final community returns to setup without resetting identity", async ({
     context,
     page,

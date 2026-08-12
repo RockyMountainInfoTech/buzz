@@ -886,6 +886,7 @@ pub fn run() {
             start_identity_recovery_pairing,
             confirm_pairing_sas,
             cancel_pairing,
+            claim_workspace_transition,
             apply_workspace,
             validate_repos_dir,
             get_active_workspace,
