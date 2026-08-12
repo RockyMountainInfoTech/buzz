@@ -1,7 +1,7 @@
 use nostr::Keys;
 use serde::{Deserialize, Serialize};
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Mutex,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -121,11 +121,23 @@ pub struct WorkspaceTransitionState {
 
 impl WorkspaceTransitionState {
     fn claim_next(&self) -> u64 {
+        let _commit_guard = self.commit.lock().unwrap_or_else(|e| e.into_inner());
         self.generation.fetch_add(1, Ordering::AcqRel) + 1
     }
 
     fn is_current(&self, generation: u64) -> bool {
         self.generation.load(Ordering::Acquire) == generation
+    }
+
+    fn restore_pending_for_current(&self, generation: u64, pending: &AtomicBool) -> bool {
+        self.is_current(generation) && pending.load(Ordering::Acquire)
+    }
+
+    fn complete_restore_if_current(&self, generation: u64, pending: &AtomicBool) {
+        let _commit_guard = self.commit.lock().unwrap_or_else(|e| e.into_inner());
+        if self.is_current(generation) {
+            pending.store(false, Ordering::Release);
+        }
     }
 }
 
@@ -296,8 +308,8 @@ pub async fn apply_workspace(
     }
 
     let restore_pending = state
-        .managed_agent_restore_pending
-        .swap(false, Ordering::AcqRel);
+        .workspace_transition
+        .restore_pending_for_current(transition_generation, &state.managed_agent_restore_pending);
 
     // The coordinator starts before React applies the selected workspace, so
     // its startup publication may have used the fallback relay and placeholder
@@ -326,10 +338,14 @@ pub async fn apply_workspace(
                 return;
             }
             if restore_pending {
-                if let Err(error) =
-                    restore_managed_agents_on_launch(&app, &state.shutdown_started).await
-                {
-                    eprintln!("buzz-desktop: failed to restore managed agents: {error}");
+                match restore_managed_agents_on_launch(&app, &state.shutdown_started).await {
+                    Ok(()) => state.workspace_transition.complete_restore_if_current(
+                        transition_generation,
+                        &state.managed_agent_restore_pending,
+                    ),
+                    Err(error) => {
+                        eprintln!("buzz-desktop: failed to restore managed agents: {error}");
+                    }
                 }
             }
         });
@@ -343,10 +359,14 @@ pub async fn apply_workspace(
             if !workspace_transition_is_current(&state, transition_generation) {
                 return;
             }
-            if let Err(error) =
-                restore_managed_agents_on_launch(&app, &state.shutdown_started).await
-            {
-                eprintln!("buzz-desktop: failed to restore managed agents: {error}");
+            match restore_managed_agents_on_launch(&app, &state.shutdown_started).await {
+                Ok(()) => state.workspace_transition.complete_restore_if_current(
+                    transition_generation,
+                    &state.managed_agent_restore_pending,
+                ),
+                Err(error) => {
+                    eprintln!("buzz-desktop: failed to restore managed agents: {error}");
+                }
             }
         });
     }
@@ -357,6 +377,7 @@ pub async fn apply_workspace(
 #[cfg(test)]
 mod tests {
     use super::WorkspaceTransitionState;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
     fn workspace_claims_remain_monotonic_across_frontend_epochs() {
@@ -374,5 +395,21 @@ mod tests {
         assert_eq!(remounted_frontend, 3);
         assert!(!transition.is_current(first_mount_switch));
         assert!(transition.is_current(remounted_frontend));
+    }
+
+    #[test]
+    fn superseded_restore_does_not_consume_launch_pending() {
+        let transition = WorkspaceTransitionState::default();
+        let pending = AtomicBool::new(true);
+        let first = transition.claim_next();
+        assert!(transition.restore_pending_for_current(first, &pending));
+
+        let winner = transition.claim_next();
+        transition.complete_restore_if_current(first, &pending);
+        assert!(pending.load(Ordering::Acquire));
+        assert!(transition.restore_pending_for_current(winner, &pending));
+
+        transition.complete_restore_if_current(winner, &pending);
+        assert!(!pending.load(Ordering::Acquire));
     }
 }
