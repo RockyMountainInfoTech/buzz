@@ -34,7 +34,7 @@ async function createWorkflow(
     await dialog.getByLabel("Description (optional)").fill(options.description);
   }
   if (options?.enabled === false) {
-    await dialog.getByLabel("Enable after creation").click();
+    await dialog.getByLabel("Enable").click();
   }
   if (options?.trigger) {
     await dialog.getByRole("button", { name: /^Trigger:/ }).click();
@@ -102,6 +102,38 @@ test("disables autocapitalization in the workflow form", async ({ page }) => {
   );
 });
 
+test("switches an empty workflow between form and YAML modes", async ({
+  page,
+}) => {
+  await navigateToWorkflows(page);
+
+  await page.getByRole("button", { name: "Create Workflow" }).click();
+  const dialog = page.getByRole("dialog");
+
+  await dialog.getByRole("tab", { name: "YAML" }).click();
+  await expect(dialog.getByLabel("Workflow YAML")).toBeVisible();
+
+  await dialog.getByRole("tab", { name: "Form" }).click();
+  await expect(dialog.getByLabel("Workflow name")).toBeVisible();
+});
+
+test("scrolls the channel list with the mouse wheel", async ({ page }) => {
+  await navigateToWorkflows(page);
+
+  await page.getByRole("button", { name: "Create Workflow" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("combobox", { name: "Channel" }).click();
+
+  const channelList = page.getByTestId("channel-combobox-list");
+  await expect(channelList).toBeVisible();
+  await channelList.hover();
+  await page.mouse.wheel(0, 500);
+
+  await expect
+    .poll(() => channelList.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+});
+
 test("opens node configuration in a contextual inspector", async ({ page }) => {
   await navigateToWorkflows(page);
 
@@ -123,12 +155,17 @@ test("opens node configuration in a contextual inspector", async ({ page }) => {
   await expect(inspector.getByLabel("Action")).toHaveValue("send_message");
   await expect(inspector.getByLabel("Message text")).toBeVisible();
   await expect(dialog.getByText("End", { exact: true })).toBeVisible();
-  await expect(
-    dialog.getByRole("button", { name: /^Step 1:/ }),
-  ).toHaveAttribute("aria-pressed", "true");
+  const stepNode = dialog.getByRole("button", { name: /^Step 1:/ });
+  await expect(stepNode).toHaveAttribute("aria-pressed", "true");
 
-  await inspector.getByRole("button", { name: "Close inspector" }).click();
-  await expect(inspector).not.toBeVisible();
+  await stepNode.hover();
+  const removeStep = dialog.getByRole("button", { name: "Remove Step 1" });
+  await expect(removeStep).toBeVisible();
+  await removeStep.click();
+  await expect(stepNode).not.toBeVisible();
+  await expect(inspector).toBeVisible();
+  await expect(inspector.getByLabel("Event")).toBeVisible();
+  await expect(dialog.getByText("End", { exact: true })).not.toBeVisible();
 });
 
 test("switches between the form and YAML editors", async ({ page }) => {

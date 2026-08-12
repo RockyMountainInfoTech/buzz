@@ -1,4 +1,5 @@
 import * as React from "react";
+import { Code } from "lucide-react";
 import { stringify as yamlStringify } from "yaml";
 
 import {
@@ -8,6 +9,7 @@ import {
 import type { Channel, Workflow } from "@/shared/api/types";
 import { getRelayHttpUrl } from "@/shared/api/tauri";
 import { Button } from "@/shared/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -16,9 +18,12 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 import { ChannelCombobox } from "./ChannelCombobox";
-import { WorkflowFormBuilder } from "./WorkflowFormBuilder";
+import {
+  WorkflowFormBuilder,
+  type WorkflowEditorMode,
+} from "./WorkflowFormBuilder";
 import { WorkflowWebhookSecretDialog } from "./WorkflowWebhookSecretDialog";
-import { FieldLabel } from "./workflowFormPrimitives";
+import { yamlToFormState } from "./workflowFormTypes";
 
 type DialogMode = "create" | "edit" | "duplicate";
 
@@ -40,6 +45,11 @@ function getInitialYaml(
     def.name = `${def.name ?? workflow.name} (copy)`;
   }
   return yamlStringify(def);
+}
+
+function getInitialEditorMode(yaml: string): WorkflowEditorMode {
+  if (!yaml) return "form";
+  return yamlToFormState(yaml).ok ? "form" : "yaml";
 }
 
 const TITLES: Record<DialogMode, string> = {
@@ -76,6 +86,14 @@ export function WorkflowDialog({
   const [yamlDefinition, setYamlDefinition] = React.useState(() =>
     getInitialYaml(mode, workflow),
   );
+  const [editorMode, setEditorMode] = React.useState<WorkflowEditorMode>(() =>
+    getInitialEditorMode(getInitialYaml(mode, workflow)),
+  );
+  const [editorParseError, setEditorParseError] = React.useState<string | null>(
+    null,
+  );
+  const [footerLeadingElement, setFooterLeadingElement] =
+    React.useState<HTMLDivElement | null>(null);
   const [savedWebhookInfo, setSavedWebhookInfo] = React.useState<{
     relayHttpUrl: string;
     webhookSecret: string;
@@ -102,7 +120,10 @@ export function WorkflowDialog({
           ? workflowChannelId
           : defaultChannelId;
       setSelectedChannelId(newChannelId);
-      setYamlDefinition(getInitialYaml(mode, workflow));
+      const initialYaml = getInitialYaml(mode, workflow);
+      setYamlDefinition(initialYaml);
+      setEditorMode(getInitialEditorMode(initialYaml));
+      setEditorParseError(null);
       setSavedWebhookInfo(null);
       resetCreate();
       resetUpdate();
@@ -147,6 +168,33 @@ export function WorkflowDialog({
     }
   }
 
+  const handleEditorModeChange = React.useCallback(
+    (nextMode: string) => {
+      if (nextMode === editorMode) return;
+
+      if (nextMode === "yaml") {
+        setEditorParseError(null);
+        setEditorMode("yaml");
+        return;
+      }
+
+      if (!yamlDefinition.trim()) {
+        setEditorParseError(null);
+        setEditorMode("form");
+        return;
+      }
+
+      const result = yamlToFormState(yamlDefinition);
+      if (result.ok) {
+        setEditorParseError(null);
+        setEditorMode("form");
+      } else {
+        setEditorParseError(result.error);
+      }
+    },
+    [editorMode, yamlDefinition],
+  );
+
   const showChannelSelector = mode !== "edit" && channels.length > 1;
   const showChannelInfo = mode !== "edit" && channels.length === 1;
 
@@ -154,31 +202,51 @@ export function WorkflowDialog({
     <>
       <Dialog onOpenChange={handleOpenChange} open={open}>
         <DialogContent className="flex h-[88vh] max-h-[88vh] w-[calc(100vw-2rem)] max-w-6xl flex-col gap-0 overflow-hidden p-0">
-          <DialogHeader className="flex-shrink-0 border-b border-border px-6 py-5 pr-14">
-            <DialogTitle>{TITLES[mode]}</DialogTitle>
-            <DialogDescription>
-              {mode === "edit"
-                ? "Update when this workflow runs and what it does."
-                : mode === "duplicate"
-                  ? "Copy this workflow and adjust its details."
-                  : "Automate actions when something happens in a channel."}
-            </DialogDescription>
+          <DialogHeader className="flex flex-shrink-0 flex-row items-center justify-between gap-6 border-b border-border px-6 py-5 pr-14 text-left">
+            <div className="space-y-1.5">
+              <DialogTitle>{TITLES[mode]}</DialogTitle>
+              <DialogDescription>
+                {mode === "edit"
+                  ? "Update when this workflow runs and what it does."
+                  : mode === "duplicate"
+                    ? "Copy this workflow and adjust its details."
+                    : "Automate actions when something happens in a channel."}
+              </DialogDescription>
+            </div>
+            <Tabs onValueChange={handleEditorModeChange} value={editorMode}>
+              <TabsList aria-label="Workflow editor mode" className="h-8 p-0.5">
+                <TabsTrigger
+                  className="h-7 px-3 text-xs"
+                  disabled={mutation.isPending}
+                  value="form"
+                >
+                  Form
+                </TabsTrigger>
+                <TabsTrigger
+                  className="h-7 gap-1.5 px-3 text-xs"
+                  disabled={mutation.isPending}
+                  value="yaml"
+                >
+                  <Code className="h-3.5 w-3.5" />
+                  YAML
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
           </DialogHeader>
 
           <div className="min-h-0 flex-1">
             <WorkflowFormBuilder
-              activationLabel={
-                mode === "edit" ? "Workflow enabled" : "Enable after creation"
-              }
               disabled={mutation.isPending}
+              footerLeadingContainer={footerLeadingElement}
+              mode={editorMode}
               onChange={(yaml) => {
                 mutation.reset();
                 setYamlDefinition(yaml);
               }}
+              parseError={editorParseError}
               scopeField={
                 showChannelSelector ? (
-                  <div className="space-y-1.5">
-                    <FieldLabel htmlFor="wf-channel-select">Channel</FieldLabel>
+                  <div>
                     <ChannelCombobox
                       channels={channels}
                       disabled={mutation.isPending}
@@ -196,9 +264,8 @@ export function WorkflowDialog({
                     ) : null}
                   </div>
                 ) : (showChannelInfo || mode === "edit") && selectedChannel ? (
-                  <div className="space-y-1">
-                    <FieldLabel>Channel</FieldLabel>
-                    <p className="text-sm font-medium text-foreground">
+                  <div className="px-3 py-2">
+                    <p className="text-lg font-semibold text-foreground">
                       {selectedChannel.name}
                     </p>
                   </div>
@@ -214,25 +281,30 @@ export function WorkflowDialog({
             </p>
           ) : null}
 
-          <div className="flex flex-shrink-0 justify-end gap-2 border-t border-border px-6 py-4">
-            <Button
-              onClick={() => handleOpenChange(false)}
-              type="button"
-              variant="outline"
-            >
-              Cancel
-            </Button>
-            <Button
-              disabled={
-                !selectedChannelId ||
-                !yamlDefinition.trim() ||
-                mutation.isPending
-              }
-              onClick={handleSubmit}
-              type="button"
-            >
-              {mutation.isPending ? PENDING_LABELS[mode] : SUBMIT_LABELS[mode]}
-            </Button>
+          <div className="flex flex-shrink-0 items-center justify-between gap-4 border-t border-border px-6 py-4">
+            <div ref={setFooterLeadingElement} />
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={() => handleOpenChange(false)}
+                type="button"
+                variant="outline"
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={
+                  !selectedChannelId ||
+                  !yamlDefinition.trim() ||
+                  mutation.isPending
+                }
+                onClick={handleSubmit}
+                type="button"
+              >
+                {mutation.isPending
+                  ? PENDING_LABELS[mode]
+                  : SUBMIT_LABELS[mode]}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

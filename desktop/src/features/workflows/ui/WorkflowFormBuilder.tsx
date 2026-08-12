@@ -1,14 +1,7 @@
-import {
-  ChevronDown,
-  Code,
-  GitBranch,
-  Plus,
-  Trash2,
-  X,
-  Zap,
-} from "lucide-react";
+import { Plus, Trash2, X, Zap } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import * as React from "react";
+import { createPortal } from "react-dom";
 
 import { Button } from "@/shared/ui/button";
 import { cn } from "@/shared/lib/cn";
@@ -22,7 +15,6 @@ import {
 } from "@/shared/ui/dropdown-menu";
 import { Input } from "@/shared/ui/input";
 import { Switch } from "@/shared/ui/switch";
-import { Tabs, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { Textarea } from "@/shared/ui/textarea";
 import { WorkflowStepCard } from "./WorkflowStepCard";
 import { FieldLabel, FormSelect } from "./workflowFormPrimitives";
@@ -142,81 +134,121 @@ function TriggerConfigFields({
 }
 
 type WorkflowFormBuilderProps = {
-  activationLabel: string;
   disabled?: boolean;
+  footerLeadingContainer?: HTMLElement | null;
+  mode: WorkflowEditorMode;
   onChange: (yaml: string) => void;
+  parseError: string | null;
   scopeField?: React.ReactNode;
   yaml: string;
 };
+
+export type WorkflowEditorMode = "form" | "yaml";
 
 type SelectedNode =
   | { type: "trigger" }
   | { type: "step"; index: number }
   | null;
 
+function nodePosition(node: Exclude<SelectedNode, null>): number {
+  return node.type === "trigger" ? 0 : node.index + 1;
+}
+
+const inspectorContentVariants = {
+  enter: (direction: number) => ({
+    opacity: 0,
+    y: direction < 0 ? 12 : -12,
+  }),
+  center: { opacity: 1, y: 0 },
+  exit: (direction: number) => ({
+    opacity: 0,
+    y: direction < 0 ? -12 : 12,
+  }),
+};
+
 function WorkflowNode({
-  connectsToNext,
   description,
   disabled,
   icon,
   label,
+  number,
   onAddAfter,
   onClick,
+  onRemove,
   selected,
+  showTitle = true,
   title,
 }: {
-  connectsToNext: boolean;
   description: string;
   disabled?: boolean;
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
   label: string;
+  number?: number;
   onAddAfter: (action: ActionType) => void;
   onClick: () => void;
+  onRemove?: () => void;
   selected: boolean;
+  showTitle?: boolean;
   title: string;
 }) {
+  const isNumbered = number !== undefined;
+
   return (
     <li className="flex flex-col items-center">
-      <button
-        aria-label={label}
-        aria-pressed={selected}
-        className={cn(
-          "flex w-full items-center gap-3 rounded-xl border bg-background px-4 py-3 text-left shadow-sm transition-colors",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-          selected
-            ? "border-foreground/60 bg-muted/50 ring-1 ring-foreground/10"
-            : "border-border hover:border-muted-foreground/50 hover:bg-muted/30",
-        )}
-        disabled={disabled}
-        onClick={onClick}
-        type="button"
-      >
-        <span
+      <div className="group relative isolate w-full after:absolute after:left-full after:top-0 after:z-0 after:h-full after:w-12 after:content-['']">
+        <button
+          aria-label={label}
+          aria-pressed={selected}
           className={cn(
-            "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-muted/40 text-muted-foreground",
-            selected && "border-foreground/30 text-foreground",
+            "relative z-20 flex w-full items-center gap-3 text-left transition-colors",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+            "rounded-full bg-muted/25 p-3 outline outline-2 outline-offset-4 outline-muted-foreground/0",
+            selected
+              ? "bg-muted/70 outline-muted-foreground/20"
+              : "hover:bg-muted/45",
           )}
+          disabled={disabled}
+          onClick={onClick}
+          type="button"
         >
-          {icon}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            {title}
+          <span
+            className={cn(
+              "flex h-9 w-9 shrink-0 items-center justify-center",
+              "rounded-full text-muted-foreground",
+              selected ? "bg-foreground/15 text-foreground" : "bg-muted/60",
+              isNumbered && "text-sm font-semibold",
+            )}
+          >
+            {isNumbered ? number : icon}
           </span>
-          <span className="block truncate text-sm font-semibold text-foreground">
-            {description}
+          <span className="min-w-0 flex-1">
+            {showTitle ? (
+              <span className="block text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {title}
+              </span>
+            ) : null}
+            <span className="block truncate text-sm font-semibold text-foreground">
+              {description}
+            </span>
           </span>
-        </span>
-      </button>
+        </button>
 
-      <span className="relative flex h-14 items-center justify-center">
-        <span
-          aria-hidden
-          className={cn(
-            "absolute left-1/2 top-0 w-px -translate-x-1/2 bg-muted-foreground/40",
-            connectsToNext ? "bottom-0" : "h-1/2",
-          )}
-        />
+        {onRemove ? (
+          <Button
+            aria-label={`Remove ${title}`}
+            className="pointer-events-none absolute right-1 top-1/2 z-10 h-8 w-8 -translate-y-1/2 rounded-full bg-transparent opacity-0 transition-all duration-200 group-focus-within:pointer-events-auto group-focus-within:translate-x-12 group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:translate-x-12 group-hover:opacity-100 hover:bg-destructive/15 hover:text-destructive"
+            disabled={disabled}
+            onClick={onRemove}
+            size="icon"
+            type="button"
+            variant="ghost"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        ) : null}
+      </div>
+
+      <span className="relative flex h-18 items-center justify-center">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -245,43 +277,31 @@ function WorkflowNode({
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
-        {connectsToNext ? (
-          <ChevronDown
-            aria-hidden
-            className="absolute -bottom-1 left-1/2 h-4 w-4 -translate-x-1/2 text-muted-foreground"
-          />
-        ) : null}
       </span>
     </li>
   );
 }
 
 export function WorkflowFormBuilder({
-  activationLabel,
   disabled,
+  footerLeadingContainer,
+  mode,
   onChange,
+  parseError,
   scopeField,
   yaml,
 }: WorkflowFormBuilderProps) {
   // Parse once on mount instead of calling yamlToFormState three times
   const initialParseRef = React.useRef(yaml ? yamlToFormState(yaml) : null);
-  const [mode, setMode] = React.useState<"form" | "yaml">(
-    initialParseRef.current === null || initialParseRef.current.ok
-      ? "form"
-      : "yaml",
-  );
   const [formState, setFormState] = React.useState<WorkflowFormState>(
     initialParseRef.current?.ok
       ? initialParseRef.current.state
       : DEFAULT_FORM_STATE,
   );
-  const [parseError, setParseError] = React.useState<string | null>(
-    initialParseRef.current !== null && !initialParseRef.current.ok
-      ? initialParseRef.current.error
-      : null,
-  );
   const [selectedNode, setSelectedNode] = React.useState<SelectedNode>(null);
+  const [selectionDirection, setSelectionDirection] = React.useState<1 | -1>(1);
   const shouldReduceMotion = useReducedMotion();
+  const previousModeRef = React.useRef(mode);
 
   const updateFormState = React.useCallback(
     (next: WorkflowFormState) => {
@@ -291,29 +311,31 @@ export function WorkflowFormBuilder({
     [onChange],
   );
 
-  const handleModeChange = React.useCallback(
-    (nextMode: string) => {
-      if (nextMode === mode) return;
+  React.useEffect(() => {
+    if (previousModeRef.current === mode) return;
+    previousModeRef.current = mode;
 
-      if (nextMode === "yaml") {
-        setMode("yaml");
-        setParseError(null);
-        setSelectedNode(null);
-        return;
-      }
+    if (mode === "yaml") {
+      setSelectedNode(null);
+      return;
+    }
 
-      if (nextMode === "form") {
-        const result = yamlToFormState(yaml);
-        if (result.ok) {
-          setFormState(result.state);
-          setParseError(null);
-          setMode("form");
-        } else {
-          setParseError(result.error);
+    const result = yamlToFormState(yaml);
+    if (result.ok) setFormState(result.state);
+  }, [mode, yaml]);
+
+  const selectNode = React.useCallback(
+    (nextNode: Exclude<SelectedNode, null>) => {
+      if (selectedNode) {
+        const currentPosition = nodePosition(selectedNode);
+        const nextPosition = nodePosition(nextNode);
+        if (nextPosition !== currentPosition) {
+          setSelectionDirection(nextPosition < currentPosition ? -1 : 1);
         }
       }
+      setSelectedNode(nextNode);
     },
-    [mode, yaml],
+    [selectedNode],
   );
 
   const insertStep = React.useCallback(
@@ -331,9 +353,9 @@ export function WorkflowFormBuilder({
         ...formState,
         steps: nextSteps,
       });
-      setSelectedNode({ type: "step", index });
+      selectNode({ type: "step", index });
     },
-    [formState, updateFormState],
+    [formState, selectNode, updateFormState],
   );
 
   const removeStep = React.useCallback(
@@ -342,16 +364,22 @@ export function WorkflowFormBuilder({
         ...formState,
         steps: formState.steps.filter((_, i) => i !== index),
       });
-      setSelectedNode((current) => {
-        if (current?.type !== "step") return current;
-        if (current.index === index) return null;
-        if (current.index > index) {
-          return { type: "step", index: current.index - 1 };
-        }
-        return current;
-      });
+
+      if (selectedNode?.type !== "step") return;
+
+      if (selectedNode.index === index) {
+        setSelectionDirection(-1);
+        setSelectedNode(
+          index === 0
+            ? { type: "trigger" }
+            : { type: "step", index: index - 1 },
+        );
+      } else if (selectedNode.index > index) {
+        setSelectionDirection(-1);
+        setSelectedNode({ type: "step", index: selectedNode.index - 1 });
+      }
     },
-    [formState, updateFormState],
+    [formState, selectedNode, updateFormState],
   );
 
   const updateStep = React.useCallback(
@@ -369,59 +397,34 @@ export function WorkflowFormBuilder({
       : undefined;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-shrink-0 items-center justify-between border-b border-border px-6 py-3">
-        <p className="text-xs text-muted-foreground">
-          Build the sequence, then select a node to configure it.
-        </p>
-        <Tabs onValueChange={handleModeChange} value={mode}>
-          <TabsList aria-label="Workflow editor mode" className="h-8 p-0.5">
-            <TabsTrigger
-              className="h-7 px-3 text-xs"
-              disabled={disabled}
-              value="form"
-            >
-              Form
-            </TabsTrigger>
-            <TabsTrigger
-              className="h-7 gap-1.5 px-3 text-xs"
-              disabled={disabled}
-              value="yaml"
-            >
-              <Code className="h-3.5 w-3.5" />
-              YAML
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
+    <>
+      <div className="flex h-full min-h-0 flex-col">
+        {parseError ? (
+          <p className="mx-6 mt-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            Cannot switch to form view: {parseError}
+          </p>
+        ) : null}
 
-      {parseError ? (
-        <p className="mx-6 mt-3 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          Cannot switch to form view: {parseError}
-        </p>
-      ) : null}
-
-      {mode === "yaml" ? (
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6">
-          <div className="max-w-md">{scopeField}</div>
-          <div className="flex h-full min-h-[320px] flex-col space-y-1.5">
-            <Textarea
-              aria-label="Workflow YAML"
-              autoCapitalize="off"
-              className="min-h-[320px] flex-1 resize-none font-mono text-xs"
-              disabled={disabled}
-              onChange={(event) => onChange(event.target.value)}
-              value={yaml}
-            />
-            <p className="text-xs text-muted-foreground">
-              Edit the raw YAML definition directly.
-            </p>
+        {mode === "yaml" ? (
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6">
+            <div className="max-w-md">{scopeField}</div>
+            <div className="flex h-full min-h-[320px] flex-col space-y-1.5">
+              <Textarea
+                aria-label="Workflow YAML"
+                autoCapitalize="off"
+                className="min-h-[320px] flex-1 resize-none font-mono text-xs"
+                disabled={disabled}
+                onChange={(event) => onChange(event.target.value)}
+                value={yaml}
+              />
+              <p className="text-xs text-muted-foreground">
+                Edit the raw YAML definition directly.
+              </p>
+            </div>
           </div>
-        </div>
-      ) : (
-        <div className="flex min-h-0 flex-1">
-          <div className="flex min-w-0 flex-1 flex-col">
-            <div className="grid flex-shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-3 border-b border-border bg-muted/10 px-6 py-4">
+        ) : (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="grid flex-shrink-0 grid-cols-2 items-end gap-3 border-b border-border bg-muted/10 px-6 py-4">
               <div className="space-y-1.5">
                 <FieldLabel htmlFor="wf-name">Workflow name</FieldLabel>
                 <Input
@@ -436,8 +439,6 @@ export function WorkflowFormBuilder({
                   value={formState.name}
                 />
               </div>
-              {scopeField}
-
               <div className="space-y-1.5">
                 <FieldLabel htmlFor="wf-description">
                   Description (optional)
@@ -456,223 +457,212 @@ export function WorkflowFormBuilder({
                   value={formState.description}
                 />
               </div>
-
-              <div className="space-y-1.5">
-                <p className="text-xs font-medium text-foreground">
-                  Activation
-                </p>
-                <div className="flex h-9 items-center justify-between gap-3 rounded-md border border-input bg-background px-3">
-                  <label
-                    className="text-sm text-foreground"
-                    htmlFor="wf-enabled"
-                  >
-                    {activationLabel}
-                  </label>
-                  <Switch
-                    checked={formState.enabled}
-                    disabled={disabled}
-                    id="wf-enabled"
-                    onCheckedChange={(checked) =>
-                      updateFormState({ ...formState, enabled: checked })
-                    }
-                  />
-                </div>
-              </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-              <div className="mx-auto w-full max-w-sm">
-                <div className="mb-4 flex items-center justify-between gap-4">
-                  <div>
-                    <h3 className="text-sm font-semibold text-foreground">
-                      Workflow sequence
-                    </h3>
-                    <p className="text-xs text-muted-foreground">
-                      Steps run from top to bottom.
-                    </p>
-                  </div>
-                  {!selectedNode ? (
-                    <p className="text-xs text-muted-foreground">
-                      Select a node to edit
-                    </p>
-                  ) : null}
+            <div className="flex min-h-0 flex-1">
+              <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-6 py-5">
+                <div className="mx-auto w-full max-w-sm">
+                  {scopeField ? <div className="mb-3">{scopeField}</div> : null}
+                  <ol aria-label="Workflow sequence">
+                    <WorkflowNode
+                      description={TRIGGER_LABELS[formState.trigger.on]}
+                      disabled={disabled}
+                      icon={<Zap className="h-4 w-4" />}
+                      label={`Trigger: ${TRIGGER_LABELS[formState.trigger.on]}`}
+                      onAddAfter={(action) => insertStep(0, action)}
+                      onClick={() => selectNode({ type: "trigger" })}
+                      selected={selectedNode?.type === "trigger"}
+                      title="Trigger"
+                    />
+
+                    {formState.steps.map((step, index) => {
+                      const nodeTitle =
+                        step.name?.trim() || ACTION_LABELS[step.action];
+                      return (
+                        <WorkflowNode
+                          description={nodeTitle}
+                          disabled={disabled}
+                          key={step.id}
+                          label={`Step ${index + 1}: ${nodeTitle}`}
+                          number={index + 1}
+                          onAddAfter={(action) => insertStep(index + 1, action)}
+                          onClick={() => selectNode({ type: "step", index })}
+                          onRemove={() => removeStep(index)}
+                          selected={
+                            selectedNode?.type === "step" &&
+                            selectedNode.index === index
+                          }
+                          showTitle={false}
+                          title={`Step ${index + 1}`}
+                        />
+                      );
+                    })}
+
+                    {formState.steps.length > 0 ? (
+                      <li className="flex justify-center">
+                        <span className="rounded-full border border-border bg-muted/30 px-5 py-1.5 text-xs font-medium text-muted-foreground">
+                          End
+                        </span>
+                      </li>
+                    ) : null}
+                  </ol>
                 </div>
-
-                <ol aria-label="Workflow sequence">
-                  <WorkflowNode
-                    connectsToNext={formState.steps.length > 0}
-                    description={TRIGGER_LABELS[formState.trigger.on]}
-                    disabled={disabled}
-                    icon={<Zap className="h-4 w-4" />}
-                    label={`Trigger: ${TRIGGER_LABELS[formState.trigger.on]}`}
-                    onAddAfter={(action) => insertStep(0, action)}
-                    onClick={() => setSelectedNode({ type: "trigger" })}
-                    selected={selectedNode?.type === "trigger"}
-                    title="Trigger"
-                  />
-
-                  {formState.steps.map((step, index) => {
-                    const nodeTitle =
-                      step.name?.trim() || ACTION_LABELS[step.action];
-                    return (
-                      <WorkflowNode
-                        connectsToNext
-                        description={nodeTitle}
-                        disabled={disabled}
-                        icon={<GitBranch className="h-4 w-4" />}
-                        key={step.id}
-                        label={`Step ${index + 1}: ${nodeTitle}`}
-                        onAddAfter={(action) => insertStep(index + 1, action)}
-                        onClick={() => setSelectedNode({ type: "step", index })}
-                        selected={
-                          selectedNode?.type === "step" &&
-                          selectedNode.index === index
-                        }
-                        title={`Step ${index + 1}`}
-                      />
-                    );
-                  })}
-
-                  {formState.steps.length > 0 ? (
-                    <li className="flex justify-center">
-                      <span className="rounded-full border border-border bg-muted/30 px-5 py-1.5 text-xs font-medium text-muted-foreground">
-                        End
-                      </span>
-                    </li>
-                  ) : null}
-                </ol>
               </div>
+
+              <AnimatePresence initial={false}>
+                {selectedNode ? (
+                  <motion.aside
+                    animate={{ opacity: 1, width: "24rem", x: 0 }}
+                    className="m-4 flex flex-shrink-0 flex-col overflow-hidden rounded-xl bg-muted/40"
+                    data-testid="workflow-node-inspector"
+                    exit={{ opacity: 0, width: 0, x: 24 }}
+                    initial={{ opacity: 0, width: 0, x: 24 }}
+                    key="workflow-node-inspector"
+                    transition={
+                      shouldReduceMotion
+                        ? { duration: 0 }
+                        : { duration: 0.24, ease: [0.22, 1, 0.36, 1] }
+                    }
+                  >
+                    <div className="flex w-96 min-w-96 flex-shrink-0 items-start justify-between gap-3 px-5 pb-3 pt-5">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          {selectedNode.type === "trigger"
+                            ? "Trigger"
+                            : `Step ${selectedNode.index + 1}`}
+                        </p>
+                        <h3 className="truncate text-base font-semibold text-foreground">
+                          {selectedNode.type === "trigger"
+                            ? TRIGGER_LABELS[formState.trigger.on]
+                            : selectedStep?.name?.trim() ||
+                              (selectedStep
+                                ? ACTION_LABELS[selectedStep.action]
+                                : "Step")}
+                        </h3>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {selectedNode.type === "step" && selectedStep ? (
+                          <Button
+                            aria-label="Remove step"
+                            className="h-8 w-8"
+                            disabled={disabled}
+                            onClick={() => removeStep(selectedNode.index)}
+                            size="icon"
+                            type="button"
+                            variant="ghost"
+                          >
+                            <Trash2 className="h-4 w-4 text-muted-foreground" />
+                          </Button>
+                        ) : null}
+                        <Button
+                          aria-label="Close inspector"
+                          className="h-8 w-8"
+                          onClick={() => setSelectedNode(null)}
+                          size="icon"
+                          type="button"
+                          variant="ghost"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="min-h-0 w-96 min-w-96 flex-1 overflow-y-auto px-5 pb-5 pt-2">
+                      <AnimatePresence
+                        custom={selectionDirection}
+                        initial={false}
+                        mode="wait"
+                      >
+                        <motion.div
+                          animate="center"
+                          custom={selectionDirection}
+                          exit="exit"
+                          initial="enter"
+                          key={
+                            selectedNode.type === "trigger"
+                              ? "trigger"
+                              : `step-${selectedNode.index}`
+                          }
+                          transition={
+                            shouldReduceMotion
+                              ? { duration: 0 }
+                              : { duration: 0.15, ease: "easeOut" }
+                          }
+                          variants={inspectorContentVariants}
+                        >
+                          {selectedNode.type === "trigger" ? (
+                            <div className="space-y-4">
+                              <div className="space-y-1.5">
+                                <FieldLabel htmlFor="wf-trigger-type">
+                                  Event
+                                </FieldLabel>
+                                <FormSelect
+                                  disabled={disabled}
+                                  id="wf-trigger-type"
+                                  onChange={(value) =>
+                                    updateFormState({
+                                      ...formState,
+                                      trigger: { on: value as TriggerType },
+                                    })
+                                  }
+                                  value={formState.trigger.on}
+                                >
+                                  {TRIGGER_TYPES.map((type) => (
+                                    <option key={type} value={type}>
+                                      {TRIGGER_LABELS[type]}
+                                    </option>
+                                  ))}
+                                </FormSelect>
+                              </div>
+                              <TriggerConfigFields
+                                onUpdate={(trigger) =>
+                                  updateFormState({ ...formState, trigger })
+                                }
+                                trigger={formState.trigger}
+                              />
+                            </div>
+                          ) : selectedStep ? (
+                            <WorkflowStepCard
+                              bare
+                              disabled={disabled}
+                              index={selectedNode.index}
+                              onRemove={() => removeStep(selectedNode.index)}
+                              onUpdate={(updated) =>
+                                updateStep(selectedNode.index, updated)
+                              }
+                              showHeader={false}
+                              step={selectedStep}
+                              triggerType={formState.trigger.on}
+                            />
+                          ) : null}
+                        </motion.div>
+                      </AnimatePresence>
+                    </div>
+                  </motion.aside>
+                ) : null}
+              </AnimatePresence>
             </div>
           </div>
-
-          <AnimatePresence initial={false}>
-            {selectedNode ? (
-              <motion.aside
-                animate={{ opacity: 1, width: "24rem", x: 0 }}
-                className="flex flex-shrink-0 flex-col overflow-hidden border-l border-border bg-background"
-                data-testid="workflow-node-inspector"
-                exit={{ opacity: 0, width: 0, x: 24 }}
-                initial={{ opacity: 0, width: 0, x: 24 }}
-                key="workflow-node-inspector"
-                transition={
-                  shouldReduceMotion
-                    ? { duration: 0 }
-                    : { duration: 0.24, ease: [0.22, 1, 0.36, 1] }
+        )}
+      </div>
+      {mode === "form" && footerLeadingContainer
+        ? createPortal(
+            <div className="flex items-center gap-3">
+              <label className="text-sm text-foreground" htmlFor="wf-enabled">
+                Enable
+              </label>
+              <Switch
+                checked={formState.enabled}
+                disabled={disabled}
+                id="wf-enabled"
+                onCheckedChange={(checked) =>
+                  updateFormState({ ...formState, enabled: checked })
                 }
-              >
-                <div className="flex w-96 min-w-96 flex-shrink-0 items-start justify-between gap-3 border-b border-border px-5 py-4">
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      {selectedNode.type === "trigger"
-                        ? "Trigger"
-                        : `Step ${selectedNode.index + 1}`}
-                    </p>
-                    <h3 className="truncate text-base font-semibold text-foreground">
-                      {selectedNode.type === "trigger"
-                        ? TRIGGER_LABELS[formState.trigger.on]
-                        : selectedStep?.name?.trim() ||
-                          (selectedStep
-                            ? ACTION_LABELS[selectedStep.action]
-                            : "Step")}
-                    </h3>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {selectedNode.type === "step" && selectedStep ? (
-                      <Button
-                        aria-label="Remove step"
-                        className="h-8 w-8"
-                        disabled={disabled}
-                        onClick={() => removeStep(selectedNode.index)}
-                        size="icon"
-                        type="button"
-                        variant="ghost"
-                      >
-                        <Trash2 className="h-4 w-4 text-muted-foreground" />
-                      </Button>
-                    ) : null}
-                    <Button
-                      aria-label="Close inspector"
-                      className="h-8 w-8"
-                      onClick={() => setSelectedNode(null)}
-                      size="icon"
-                      type="button"
-                      variant="ghost"
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="min-h-0 w-96 min-w-96 flex-1 overflow-y-auto p-5">
-                  <AnimatePresence initial={false} mode="wait">
-                    <motion.div
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -8 }}
-                      initial={{ opacity: 0, x: 8 }}
-                      key={
-                        selectedNode.type === "trigger"
-                          ? "trigger"
-                          : `step-${selectedNode.index}`
-                      }
-                      transition={
-                        shouldReduceMotion
-                          ? { duration: 0 }
-                          : { duration: 0.15, ease: "easeOut" }
-                      }
-                    >
-                      {selectedNode.type === "trigger" ? (
-                        <div className="space-y-4">
-                          <div className="space-y-1.5">
-                            <FieldLabel htmlFor="wf-trigger-type">
-                              Event
-                            </FieldLabel>
-                            <FormSelect
-                              disabled={disabled}
-                              id="wf-trigger-type"
-                              onChange={(value) =>
-                                updateFormState({
-                                  ...formState,
-                                  trigger: { on: value as TriggerType },
-                                })
-                              }
-                              value={formState.trigger.on}
-                            >
-                              {TRIGGER_TYPES.map((type) => (
-                                <option key={type} value={type}>
-                                  {TRIGGER_LABELS[type]}
-                                </option>
-                              ))}
-                            </FormSelect>
-                          </div>
-                          <TriggerConfigFields
-                            onUpdate={(trigger) =>
-                              updateFormState({ ...formState, trigger })
-                            }
-                            trigger={formState.trigger}
-                          />
-                        </div>
-                      ) : selectedStep ? (
-                        <WorkflowStepCard
-                          bare
-                          disabled={disabled}
-                          index={selectedNode.index}
-                          onRemove={() => removeStep(selectedNode.index)}
-                          onUpdate={(updated) =>
-                            updateStep(selectedNode.index, updated)
-                          }
-                          showHeader={false}
-                          step={selectedStep}
-                          triggerType={formState.trigger.on}
-                        />
-                      ) : null}
-                    </motion.div>
-                  </AnimatePresence>
-                </div>
-              </motion.aside>
-            ) : null}
-          </AnimatePresence>
-        </div>
-      )}
-    </div>
+              />
+            </div>,
+            footerLeadingContainer,
+          )
+        : null}
+    </>
   );
 }

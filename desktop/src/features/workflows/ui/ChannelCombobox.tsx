@@ -1,12 +1,14 @@
-import { Check, ChevronsUpDown, Search } from "lucide-react";
+import { Check, ChevronDown, Hash, Lock, Search } from "lucide-react";
 import * as React from "react";
 
 import type { Channel } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
-function formatChannelLabel(ch: Channel): string {
-  return `${ch.name} · ${ch.channelType} · ${ch.visibility}`;
+function ChannelPrivacyIcon({ channel }: { channel: Channel }) {
+  const Icon = channel.visibility === "private" ? Lock : Hash;
+
+  return <Icon aria-hidden className="h-5 w-5 shrink-0" />;
 }
 
 type ChannelComboboxProps = {
@@ -86,9 +88,10 @@ export function ChannelCombobox({
     <Popover onOpenChange={handleOpenChange} open={open}>
       <PopoverTrigger asChild>
         <button
+          aria-label="Channel"
           aria-expanded={open}
           className={cn(
-            "flex h-9 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 text-sm shadow-xs transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
+            "group flex w-full items-center justify-center rounded-lg border-0 bg-transparent px-3 py-2 text-lg font-semibold focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
             !selected && "text-muted-foreground",
           )}
           disabled={disabled}
@@ -96,15 +99,19 @@ export function ChannelCombobox({
           role="combobox"
           type="button"
         >
-          <span className="truncate">
-            {selected ? formatChannelLabel(selected) : "Select a channel..."}
+          <span className="flex min-w-0 items-center justify-center gap-2">
+            {selected ? <ChannelPrivacyIcon channel={selected} /> : null}
+            <span className="truncate">
+              {selected ? selected.name : "Select a channel..."}
+            </span>
+            <ChevronDown className="ml-1 h-5 w-5 shrink-0 text-muted-foreground opacity-50 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
           </span>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 text-muted-foreground" />
         </button>
       </PopoverTrigger>
       <PopoverContent
         align="start"
         className="w-(--radix-popover-trigger-width) p-0"
+        portalled={false}
       >
         <div className="flex items-center gap-2 border-b border-border px-3 py-2">
           <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -124,7 +131,10 @@ export function ChannelCombobox({
             value={query}
           />
         </div>
-        <div className="max-h-60 overflow-y-auto p-1">
+        <div
+          className="max-h-60 overflow-y-auto p-1"
+          data-testid="channel-combobox-list"
+        >
           {filtered.length === 0 ? (
             <p className="px-3 py-4 text-center text-xs text-muted-foreground">
               No channels found.
@@ -142,18 +152,19 @@ export function ChannelCombobox({
                 onClick={() => selectChannel(channel.id)}
                 type="button"
               >
-                <Check
-                  className={cn(
-                    "h-4 w-4 shrink-0",
-                    channel.id === value ? "opacity-100" : "opacity-0",
-                  )}
-                />
+                <ChannelPrivacyIcon channel={channel} />
                 <span className="truncate">
                   {channel.name}{" "}
                   <span className="text-muted-foreground">
-                    · {channel.channelType} · {channel.visibility}
+                    · {channel.channelType}
                   </span>
                 </span>
+                <Check
+                  className={cn(
+                    "ml-auto h-4 w-4 shrink-0",
+                    channel.id === value ? "opacity-100" : "opacity-0",
+                  )}
+                />
               </button>
             ))
           )}
