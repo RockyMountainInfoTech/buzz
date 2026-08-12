@@ -103,7 +103,10 @@ class _SheetDragHandle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: 'Drag handle',
+      label: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+      container: true,
+      button: true,
+      onTap: () => Navigator.of(context).pop(),
       child: Container(
         key: const ValueKey('buzz-sheet-drag-handle'),
         width: 32,

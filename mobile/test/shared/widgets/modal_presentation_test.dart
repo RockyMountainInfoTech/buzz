@@ -3,6 +3,7 @@ import 'package:buzz/shared/theme/theme.dart';
 import 'package:buzz/shared/widgets/modal_presentation.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -244,11 +245,22 @@ void main() {
               tester.getTopLeft(find.byType(BottomSheet)).dy,
           Grid.gutter,
         );
-        expect(find.text('Sheet body'), findsOneWidget);
-
-        await tester.tap(closeButton);
+        final dismissHandle = find.bySemanticsLabel('Dismiss').first;
+        expect(dismissHandle, findsOneWidget);
+        final semantics = tester.getSemantics(dismissHandle);
+        expect(semantics.flagsCollection.isButton, isTrue);
+        expect(
+          semantics.getSemanticsData().hasAction(SemanticsAction.tap),
+          isTrue,
+        );
+        tester.binding.performSemanticsAction(
+          SemanticsActionEvent(
+            type: SemanticsAction.tap,
+            viewId: tester.view.viewId,
+            nodeId: semantics.id,
+          ),
+        );
         await tester.pumpAndSettle();
-
         expect(find.text('Sheet body'), findsNothing);
       } finally {
         debugDefaultTargetPlatformOverride = null;
@@ -291,7 +303,14 @@ void main() {
       );
       expect(internalHandle, findsOneWidget);
       expect(tester.getSize(internalHandle), const Size(32, 4));
-      expect(find.bySemanticsLabel('Drag handle'), findsOneWidget);
+      final dismissHandle = find.bySemanticsLabel('Dismiss');
+      expect(dismissHandle, findsOneWidget);
+      final semantics = tester.getSemantics(dismissHandle);
+      expect(semantics.flagsCollection.isButton, isTrue);
+      expect(
+        semantics.getSemanticsData().hasAction(SemanticsAction.tap),
+        isTrue,
+      );
       expect(find.byTooltip('Close sheet'), findsOneWidget);
       expect(find.text('Sheet body'), findsOneWidget);
     } finally {
