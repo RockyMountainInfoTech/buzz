@@ -200,10 +200,10 @@ pub async fn restore_managed_agents_on_launch(
                 .cloned()
                 .collect();
             if !stale_keys.is_empty() {
-                let record = records
-                    .iter_mut()
-                    .find(|record| record.pubkey == *pubkey)
-                    .expect("candidate record remains available");
+                let Some(record) = records.iter_mut().find(|record| record.pubkey == *pubkey)
+                else {
+                    continue;
+                };
                 for stale_key in stale_keys {
                     super::stop_managed_agent_pair(app, record, &mut runtimes, &stale_key)?;
                 }

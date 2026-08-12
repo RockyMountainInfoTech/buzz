@@ -487,6 +487,7 @@ type E2eConfig = {
       channelId: string;
       messageId?: string | null;
       threadRootId?: string | null;
+      workspaceGeneration?: number;
     }>;
     // When true, `get_identity` returns `lost: true` until `persist_current_identity`
     // or `import_identity` is called. Drives the identity-lost recovery UX in tests.
@@ -4380,6 +4381,7 @@ let mockPendingNavigationDeepLinks: Array<{
   channelId: string;
   messageId: string | null;
   threadRootId: string | null;
+  workspaceGeneration: number;
 }> = [];
 
 function resetMockPendingNavigationDeepLinks(config: E2eConfig | null) {
@@ -4389,6 +4391,7 @@ function resetMockPendingNavigationDeepLinks(config: E2eConfig | null) {
     ...pending,
     messageId: pending.messageId ?? null,
     threadRootId: pending.threadRootId ?? null,
+    workspaceGeneration: pending.workspaceGeneration ?? 0,
   }));
 }
 
@@ -11991,6 +11994,9 @@ export function maybeInstallE2eTauriMocks() {
         return true;
       }
       case "clear_pending_navigation_deep_links": {
+        const { workspaceGeneration } = payload as {
+          workspaceGeneration: number;
+        };
         const clearDelayMs =
           activeConfig?.mock?.clearPendingNavigationDeepLinksDelayMs ?? 0;
         if (clearDelayMs > 0) {
@@ -11998,7 +12004,9 @@ export function maybeInstallE2eTauriMocks() {
             window.setTimeout(resolve, clearDelayMs),
           );
         }
-        mockPendingNavigationDeepLinks.length = 0;
+        mockPendingNavigationDeepLinks = mockPendingNavigationDeepLinks.filter(
+          (pending) => pending.workspaceGeneration >= workspaceGeneration,
+        );
         return;
       }
       case "take_pending_navigation_deep_link":

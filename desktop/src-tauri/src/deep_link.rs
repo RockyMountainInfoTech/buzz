@@ -28,6 +28,7 @@ pub(crate) struct PendingNavigationDeepLink {
     channel_id: String,
     message_id: Option<String>,
     thread_root_id: Option<String>,
+    workspace_generation: u64,
 }
 
 #[derive(Default)]
@@ -48,14 +49,16 @@ impl PendingNavigationDeepLinks {
                 && item.channel_id == pending.channel_id
                 && item.message_id == pending.message_id
                 && item.thread_root_id == pending.thread_root_id
+                && item.workspace_generation == pending.workspace_generation
         }) {
             return;
         }
         queue.push_back(pending);
     }
 
-    fn clear(&self) {
-        self.lock().clear();
+    fn clear_before(&self, workspace_generation: u64) {
+        self.lock()
+            .retain(|pending| pending.workspace_generation >= workspace_generation);
     }
 
     fn first(&self) -> Option<PendingNavigationDeepLink> {
@@ -74,8 +77,11 @@ impl PendingNavigationDeepLinks {
 }
 
 #[tauri::command]
-pub(crate) fn clear_pending_navigation_deep_links(pending: State<'_, PendingNavigationDeepLinks>) {
-    pending.clear();
+pub(crate) fn clear_pending_navigation_deep_links(
+    workspace_generation: u64,
+    pending: State<'_, PendingNavigationDeepLinks>,
+) {
+    pending.clear_before(workspace_generation);
 }
 
 #[tauri::command]
@@ -165,6 +171,10 @@ fn queue_navigation_deep_link(app: &tauri::AppHandle, kind: &str, payload: &serd
     let Some(channel_id) = payload["channelId"].as_str() else {
         return;
     };
+    let workspace_generation = app
+        .state::<crate::app_state::AppState>()
+        .workspace_transition
+        .current_generation();
     app.state::<PendingNavigationDeepLinks>()
         .enqueue(PendingNavigationDeepLink {
             id: uuid::Uuid::new_v4().to_string(),
@@ -172,6 +182,7 @@ fn queue_navigation_deep_link(app: &tauri::AppHandle, kind: &str, payload: &serd
             channel_id: channel_id.to_owned(),
             message_id: payload["messageId"].as_str().map(str::to_owned),
             thread_root_id: payload["threadRootId"].as_str().map(str::to_owned),
+            workspace_generation,
         });
 }
 
@@ -522,12 +533,24 @@ mod tests {
         message_id: Option<&str>,
         thread_root_id: Option<&str>,
     ) -> PendingNavigationDeepLink {
+        pending_navigation_at(id, kind, channel_id, message_id, thread_root_id, 0)
+    }
+
+    fn pending_navigation_at(
+        id: &str,
+        kind: &str,
+        channel_id: &str,
+        message_id: Option<&str>,
+        thread_root_id: Option<&str>,
+        workspace_generation: u64,
+    ) -> PendingNavigationDeepLink {
         PendingNavigationDeepLink {
             id: id.to_owned(),
             kind: kind.to_owned(),
             channel_id: channel_id.to_owned(),
             message_id: message_id.map(str::to_owned),
             thread_root_id: thread_root_id.map(str::to_owned),
+            workspace_generation,
         }
     }
 
@@ -565,24 +588,28 @@ mod tests {
     }
 
     #[test]
-    fn pending_navigation_links_can_be_cleared() {
+    fn pending_navigation_links_can_be_cleared_without_dropping_new_generation() {
         let queue = PendingNavigationDeepLinks::default();
-        queue.enqueue(pending_navigation(
-            "first",
+        queue.enqueue(pending_navigation_at(
+            "stale",
             "channel",
             "channel-1",
             None,
             None,
+            1,
         ));
-        queue.enqueue(pending_navigation(
-            "second",
-            "message",
+        queue.enqueue(pending_navigation_at(
+            "fresh",
+            "channel",
             "channel-1",
-            Some("message-1"),
             None,
+            None,
+            2,
         ));
 
-        queue.clear();
+        queue.clear_before(2);
+        assert_eq!(queue.first().unwrap().id, "fresh");
+        assert!(queue.acknowledge("fresh"));
         assert!(queue.first().is_none());
     }
 

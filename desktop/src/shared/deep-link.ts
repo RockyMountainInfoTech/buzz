@@ -33,6 +33,7 @@ type PendingNavigationDeepLink = {
   channelId: string;
   messageId: string | null;
   threadRootId: string | null;
+  workspaceGeneration: number;
 };
 
 export type NostrBindDeepLinkPayload = {
@@ -165,10 +166,14 @@ export async function listenForDeepLinks(
 let navigationDrainTail: Promise<void> = Promise.resolve();
 let navigationDrainGeneration = 0;
 
-export async function resetNavigationDeepLinkDrain(): Promise<void> {
+export async function resetNavigationDeepLinkDrain(
+  workspaceGeneration: number,
+): Promise<void> {
   navigationDrainGeneration += 1;
   try {
-    await invoke("clear_pending_navigation_deep_links");
+    await invoke("clear_pending_navigation_deep_links", {
+      workspaceGeneration,
+    });
   } catch (error: unknown) {
     // A community switch must not strand the app behind its loading gate if
     // the best-effort native queue cleanup is unavailable. The generation

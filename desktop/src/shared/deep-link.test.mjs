@@ -219,7 +219,7 @@ test("community reset prevents an in-flight route from acknowledging", async () 
   );
   await settle();
 
-  await resetNavigationDeepLinkDrain();
+  await resetNavigationDeepLinkDrain(2);
   routeGate.resolve();
   await settle();
 
@@ -256,7 +256,7 @@ test("community reset after take does not route the stale item", async () => {
   );
   await settle();
 
-  await resetNavigationDeepLinkDrain();
+  await resetNavigationDeepLinkDrain(2);
   takeGate.resolve();
   await settle();
 
@@ -298,7 +298,7 @@ test("community reset stops the stale drain before taking another item", async (
     async ({ id }) => {
       assert.equal(queue[0]?.id, id);
       queue.shift();
-      await resetNavigationDeepLinkDrain();
+      await resetNavigationDeepLinkDrain(2);
       return true;
     },
   );
@@ -327,7 +327,7 @@ test("community reset tolerates native queue clear rejection", async () => {
   console.warn = (...args) => warnings.push(args);
 
   try {
-    await resetNavigationDeepLinkDrain();
+    await resetNavigationDeepLinkDrain(2);
     assert.equal(warnings.length, 1);
     assert.match(String(warnings[0][1]), /clear failed/);
   } finally {

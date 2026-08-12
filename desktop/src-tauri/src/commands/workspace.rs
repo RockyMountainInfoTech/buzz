@@ -114,7 +114,7 @@ pub async fn validate_repos_dir(dir: String) -> Result<(), String> {
 }
 
 #[derive(Default)]
-pub struct WorkspaceTransitionState {
+pub(crate) struct WorkspaceTransitionState {
     generation: AtomicU64,
     commit: Mutex<()>,
     /// Provider deployments are externally last-write-wins. Serialize the
@@ -171,6 +171,10 @@ impl WorkspaceTransitionState {
 
     fn is_current(&self, generation: u64) -> bool {
         self.generation.load(Ordering::Acquire) == generation
+    }
+
+    pub(crate) fn current_generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
     }
 
     fn owner(&self, generation: u64) -> WorkspaceTransitionOwner<'_> {
