@@ -160,6 +160,8 @@ test("opens node configuration in a contextual inspector", async ({ page }) => {
 
   await dialog.getByRole("button", { name: "Add step" }).click();
   await page.getByRole("menuitem", { name: "Send Message" }).click();
+  const triggerNode = dialog.getByRole("button", { name: /^Trigger:/ });
+  const stepNode = dialog.getByRole("button", { name: /^Step 1:/ });
   await expect(inspector.getByLabel("Step ID")).toHaveValue("step_1");
   await expect(inspector.getByLabel("Action")).toHaveAttribute(
     "data-value",
@@ -167,6 +169,22 @@ test("opens node configuration in a contextual inspector", async ({ page }) => {
   );
   await expect(inspector.getByLabel("Message text")).toBeVisible();
   await expect(dialog.getByText("End", { exact: true })).toBeVisible();
+  await expect(triggerNode).toHaveAttribute("aria-pressed", "false");
+  await expect(stepNode).toHaveAttribute("aria-pressed", "true");
+  expect(
+    await triggerNode.evaluate(
+      (element) => getComputedStyle(element).outlineColor,
+    ),
+  ).not.toBe(
+    await stepNode.evaluate(
+      (element) => getComputedStyle(element).outlineColor,
+    ),
+  );
+  await expect
+    .poll(() =>
+      inspector.evaluate((element) => getComputedStyle(element).padding),
+    )
+    .toBe("16px");
 
   await inspector.getByLabel("Action").click();
   await page.getByRole("menuitem", { name: "Send DM" }).click();
@@ -176,7 +194,6 @@ test("opens node configuration in a contextual inspector", async ({ page }) => {
   );
   await expect(inspector.getByLabel("To (pubkey)")).toBeVisible();
 
-  const stepNode = dialog.getByRole("button", { name: /^Step 1:/ });
   await inspector.getByLabel("Name (optional)").fill("Notify deployer");
   await expect(stepNode).toContainText("Notify deployer");
   await expect(stepNode).toContainText("Send DM");

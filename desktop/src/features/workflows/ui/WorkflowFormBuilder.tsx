@@ -244,10 +244,10 @@ function WorkflowNode({
             "relative z-20 flex w-full items-center gap-3 text-left transition-colors",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
             "rounded-full bg-muted/25 p-3 outline outline-2 outline-offset-4 outline-muted-foreground/0",
-            selected
-              ? "bg-muted/70 outline-muted-foreground/20"
-              : "hover:bg-muted/45",
+            "data-[selected=true]:bg-muted/70 data-[selected=true]:outline-muted-foreground/20",
+            "data-[selected=false]:hover:bg-muted/45",
           )}
+          data-selected={selected}
           disabled={disabled}
           onClick={onClick}
           type="button"
@@ -255,10 +255,11 @@ function WorkflowNode({
           <span
             className={cn(
               "flex h-9 w-9 shrink-0 items-center justify-center",
-              "rounded-full text-muted-foreground",
-              selected ? "bg-foreground/15 text-foreground" : "bg-muted/60",
+              "rounded-full bg-muted/60 text-muted-foreground",
+              "data-[selected=true]:bg-foreground/15 data-[selected=true]:text-foreground",
               isNumbered && "text-sm font-semibold",
             )}
+            data-selected={selected}
           >
             {isNumbered ? number : icon}
           </span>
@@ -558,8 +559,8 @@ export function WorkflowFormBuilder({
               <AnimatePresence initial={false}>
                 {selectedNode ? (
                   <motion.aside
-                    animate={{ opacity: 1, width: "24rem", x: 0 }}
-                    className="m-4 flex flex-shrink-0 flex-col overflow-hidden rounded-xl bg-muted/40"
+                    animate={{ opacity: 1, width: "26rem", x: 0 }}
+                    className="flex flex-shrink-0 p-4"
                     data-testid="workflow-node-inspector"
                     exit={{ opacity: 0, width: 0, x: 24 }}
                     initial={{ opacity: 0, width: 0, x: 24 }}
@@ -570,119 +571,121 @@ export function WorkflowFormBuilder({
                         : { duration: 0.24, ease: [0.22, 1, 0.36, 1] }
                     }
                   >
-                    <div className="flex w-96 min-w-96 flex-shrink-0 items-start justify-between gap-3 px-5 pb-3 pt-5">
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          {selectedNode.type === "trigger"
-                            ? "Trigger"
-                            : `Step ${selectedNode.index + 1}`}
-                        </p>
-                        {selectedNode.type === "trigger" ? (
-                          <InspectorTypeMenu
-                            ariaLabel="Trigger event"
-                            disabled={disabled}
-                            labels={TRIGGER_LABELS}
-                            onChange={(triggerType) =>
-                              updateFormState({
-                                ...formState,
-                                trigger: { on: triggerType },
-                              })
-                            }
-                            options={TRIGGER_TYPES}
-                            value={formState.trigger.on}
-                          />
-                        ) : selectedStep ? (
-                          <InspectorTypeMenu
-                            ariaLabel="Action"
-                            disabled={disabled}
-                            labels={ACTION_LABELS}
-                            onChange={(action) => {
-                              const next = { ...selectedStep, action };
-                              if (action === "call_webhook" && !next.method) {
-                                next.method = "POST";
+                    <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-muted/40">
+                      <div className="flex w-96 min-w-96 flex-shrink-0 items-start justify-between gap-3 px-5 pb-3 pt-5">
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                            {selectedNode.type === "trigger"
+                              ? "Trigger"
+                              : `Step ${selectedNode.index + 1}`}
+                          </p>
+                          {selectedNode.type === "trigger" ? (
+                            <InspectorTypeMenu
+                              ariaLabel="Trigger event"
+                              disabled={disabled}
+                              labels={TRIGGER_LABELS}
+                              onChange={(triggerType) =>
+                                updateFormState({
+                                  ...formState,
+                                  trigger: { on: triggerType },
+                                })
                               }
-                              updateStep(selectedNode.index, next);
-                            }}
-                            options={ACTION_TYPES}
-                            value={selectedStep.action}
-                          />
-                        ) : null}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        {selectedNode.type === "step" && selectedStep ? (
+                              options={TRIGGER_TYPES}
+                              value={formState.trigger.on}
+                            />
+                          ) : selectedStep ? (
+                            <InspectorTypeMenu
+                              ariaLabel="Action"
+                              disabled={disabled}
+                              labels={ACTION_LABELS}
+                              onChange={(action) => {
+                                const next = { ...selectedStep, action };
+                                if (action === "call_webhook" && !next.method) {
+                                  next.method = "POST";
+                                }
+                                updateStep(selectedNode.index, next);
+                              }}
+                              options={ACTION_TYPES}
+                              value={selectedStep.action}
+                            />
+                          ) : null}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          {selectedNode.type === "step" && selectedStep ? (
+                            <Button
+                              aria-label="Remove step"
+                              className="h-8 w-8"
+                              disabled={disabled}
+                              onClick={() => removeStep(selectedNode.index)}
+                              size="icon"
+                              type="button"
+                              variant="ghost"
+                            >
+                              <Trash2 className="h-4 w-4 text-muted-foreground" />
+                            </Button>
+                          ) : null}
                           <Button
-                            aria-label="Remove step"
+                            aria-label="Close inspector"
                             className="h-8 w-8"
-                            disabled={disabled}
-                            onClick={() => removeStep(selectedNode.index)}
+                            onClick={() => setSelectedNode(null)}
                             size="icon"
                             type="button"
                             variant="ghost"
                           >
-                            <Trash2 className="h-4 w-4 text-muted-foreground" />
+                            <X className="h-4 w-4" />
                           </Button>
-                        ) : null}
-                        <Button
-                          aria-label="Close inspector"
-                          className="h-8 w-8"
-                          onClick={() => setSelectedNode(null)}
-                          size="icon"
-                          type="button"
-                          variant="ghost"
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="min-h-0 w-96 min-w-96 flex-1 overflow-y-auto px-5 pb-5 pt-2">
-                      <AnimatePresence
-                        custom={selectionDirection}
-                        initial={false}
-                        mode="wait"
-                      >
-                        <motion.div
-                          animate="center"
+                      <div className="min-h-0 w-96 min-w-96 flex-1 overflow-y-auto px-5 pb-5 pt-2">
+                        <AnimatePresence
                           custom={selectionDirection}
-                          exit="exit"
-                          initial="enter"
-                          key={
-                            selectedNode.type === "trigger"
-                              ? "trigger"
-                              : `step-${selectedNode.index}`
-                          }
-                          transition={
-                            shouldReduceMotion
-                              ? { duration: 0 }
-                              : { duration: 0.15, ease: "easeOut" }
-                          }
-                          variants={inspectorContentVariants}
+                          initial={false}
+                          mode="wait"
                         >
-                          {selectedNode.type === "trigger" ? (
-                            <div>
-                              <TriggerConfigFields
-                                onUpdate={(trigger) =>
-                                  updateFormState({ ...formState, trigger })
+                          <motion.div
+                            animate="center"
+                            custom={selectionDirection}
+                            exit="exit"
+                            initial="enter"
+                            key={
+                              selectedNode.type === "trigger"
+                                ? "trigger"
+                                : `step-${selectedNode.index}`
+                            }
+                            transition={
+                              shouldReduceMotion
+                                ? { duration: 0 }
+                                : { duration: 0.15, ease: "easeOut" }
+                            }
+                            variants={inspectorContentVariants}
+                          >
+                            {selectedNode.type === "trigger" ? (
+                              <div>
+                                <TriggerConfigFields
+                                  onUpdate={(trigger) =>
+                                    updateFormState({ ...formState, trigger })
+                                  }
+                                  trigger={formState.trigger}
+                                />
+                              </div>
+                            ) : selectedStep ? (
+                              <WorkflowStepCard
+                                bare
+                                disabled={disabled}
+                                index={selectedNode.index}
+                                onRemove={() => removeStep(selectedNode.index)}
+                                onUpdate={(updated) =>
+                                  updateStep(selectedNode.index, updated)
                                 }
-                                trigger={formState.trigger}
+                                showHeader={false}
+                                step={selectedStep}
+                                triggerType={formState.trigger.on}
                               />
-                            </div>
-                          ) : selectedStep ? (
-                            <WorkflowStepCard
-                              bare
-                              disabled={disabled}
-                              index={selectedNode.index}
-                              onRemove={() => removeStep(selectedNode.index)}
-                              onUpdate={(updated) =>
-                                updateStep(selectedNode.index, updated)
-                              }
-                              showHeader={false}
-                              step={selectedStep}
-                              triggerType={formState.trigger.on}
-                            />
-                          ) : null}
-                        </motion.div>
-                      </AnimatePresence>
+                            ) : null}
+                          </motion.div>
+                        </AnimatePresence>
+                      </div>
                     </div>
                   </motion.aside>
                 ) : null}
