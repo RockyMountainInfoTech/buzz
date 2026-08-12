@@ -1,4 +1,4 @@
-import { SmilePlus } from "lucide-react";
+import { AtSign, SmilePlus } from "lucide-react";
 import * as React from "react";
 
 import { EmojiPicker } from "@/features/custom-emoji/ui/EmojiPicker";
@@ -22,7 +22,6 @@ import { isPositiveEmojiParticle } from "@/shared/ui/EmojiBurstProvider";
 import {
   MENTION_CHIP_BASE_CLASSES,
   MENTION_CHIP_HOVER_CLASSES,
-  MENTION_CHIP_PREFIX_CLASS,
   MESSAGE_MARKDOWN_CLASS,
 } from "@/shared/ui/mentionChip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
@@ -290,7 +289,7 @@ function ProfileName({
       )}
     >
       {highlight && !isAgentMention ? (
-        <span className={MENTION_CHIP_PREFIX_CLASS}>@</span>
+        <AtSign aria-hidden="true" className="mention-chip-icon" />
       ) : null}
       {children}
     </span>

@@ -2,6 +2,7 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import type { Components } from "react-markdown";
 import {
+  AtSign,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -39,7 +40,6 @@ import {
   INLINE_CODE_CHIP_CLASS,
   MENTION_CHIP_BASE_CLASSES,
   MENTION_CHIP_HOVER_CLASSES,
-  MENTION_CHIP_PREFIX_CLASS,
   MESSAGE_MARKDOWN_CLASS,
 } from "@/shared/ui/mentionChip";
 
@@ -1631,7 +1631,7 @@ export function createMarkdownComponents(
         mentionLabel
       ) : (
         <>
-          <span className={MENTION_CHIP_PREFIX_CLASS}>@</span>
+          <AtSign aria-hidden="true" className="mention-chip-icon" />
           {mentionLabel}
         </>
       );
@@ -1732,7 +1732,7 @@ export function createMarkdownComponents(
  * four instances ever exist. Module-stable maps mean cached markdown element
  * trees (see ./markdown/nodeCache.ts) never embed per-mount closures.
  */
-const MARKDOWN_COMPONENT_SCHEMA_VERSION = "6";
+const MARKDOWN_COMPONENT_SCHEMA_VERSION = "7";
 const markdownComponentsByVariant = new Map<string, MarkdownComponentSet>();
 
 type MarkdownComponentSet = { components: Components; variant: string };

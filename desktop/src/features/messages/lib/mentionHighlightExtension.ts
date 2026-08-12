@@ -267,7 +267,8 @@ function buildDecorations(
       node.text,
       pos,
       mentionPatterns,
-      "mention-chip",
+      "mention-chip human-mention-highlight",
+      { hideMentionPrefix: true },
     );
     addMatchesForPatterns(
       decorations,
@@ -306,7 +307,7 @@ function addMatchesForPatterns(
       if (options?.hideMentionPrefix && match[0].startsWith("@")) {
         decorations.push(
           Decoration.inline(from, from + 1, {
-            class: "agent-mention-at-hidden",
+            class: "mention-prefix-hidden",
             spellcheck: "false",
           }),
         );

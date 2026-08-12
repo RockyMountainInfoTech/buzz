@@ -1172,6 +1172,68 @@ test("channel references replace the authored hash with the channel icon", () =>
   assert.doesNotMatch(html, />#engineering</);
 });
 
+test("resolved human mentions replace the authored at-sign with the Lucide icon", () => {
+  const markdown = renderCachedMarkdown({
+    components: createMarkdownComponents(false, false),
+    content: "Ask @alice",
+    mentionNames: ["alice"],
+    variant: "human-mention-icon-integration-test",
+  });
+  const html = renderToStaticMarkup(
+    React.createElement(
+      MarkdownRuntimeContext.Provider,
+      {
+        value: {
+          channels: [],
+          mentionPubkeysByName: { alice: HUMAN_PUBKEY },
+          onOpenChannel: () => {},
+          onOpenEntityLink: () => {},
+          onOpenMessageLink: () => {},
+          relayOrigin: null,
+        },
+      },
+      markdown,
+    ),
+  );
+
+  assert.match(html, /data-mention=""/);
+  assert.match(html, /lucide-at-sign/);
+  assert.match(html, />alice</);
+  assert.doesNotMatch(html, />@alice</);
+});
+
+test("agent mentions retain the bot treatment instead of the human icon", () => {
+  const markdown = renderCachedMarkdown({
+    components: createMarkdownComponents(false, false),
+    content: "Ask @alice",
+    mentionNames: ["alice"],
+    variant: "agent-mention-icon-integration-test",
+  });
+  const html = renderToStaticMarkup(
+    React.createElement(
+      MarkdownRuntimeContext.Provider,
+      {
+        value: {
+          agentMentionPubkeysByName: { alice: AGENT_PUBKEY },
+          channels: [],
+          mentionPubkeysByName: { alice: AGENT_PUBKEY },
+          onOpenChannel: () => {},
+          onOpenEntityLink: () => {},
+          onOpenMessageLink: () => {},
+          relayOrigin: null,
+        },
+      },
+      markdown,
+    ),
+  );
+
+  assert.match(html, /data-mention=""/);
+  assert.match(html, /agent-mention-highlight/);
+  assert.doesNotMatch(html, /lucide-at-sign/);
+  assert.match(html, />alice</);
+  assert.doesNotMatch(html, />@alice</);
+});
+
 test("renderEntityLinkAnchor renders Buzz entity links as chips", () => {
   const prLink = `buzz://pr?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world`;
   const el = renderEntityLinkAnchor({
