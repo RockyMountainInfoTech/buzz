@@ -89,10 +89,33 @@ struct StateValue {
     value: DynValue,
 }
 
-struct CachedVoice {
-    samples_ptr: usize,
+/// Stable identity for a reference voice: a content hash of the sample
+/// buffer plus its length and rate. Buffer addresses are NOT part of the
+/// key — voice switching clones and drops sample buffers, so the allocator
+/// can hand a different voice the same address, and an address-based key
+/// would then restore the previous voice's cached state.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+struct VoiceKey {
+    content_hash: u64,
     samples_len: usize,
     sample_rate: i32,
+}
+
+fn voice_key(style: &VoiceStyle) -> VoiceKey {
+    use std::hash::Hasher;
+    let mut hasher = std::hash::DefaultHasher::new();
+    for sample in &style.samples {
+        hasher.write_u32(sample.to_bits());
+    }
+    VoiceKey {
+        content_hash: hasher.finish(),
+        samples_len: style.samples.len(),
+        sample_rate: style.sample_rate,
+    }
+}
+
+struct CachedVoice {
+    key: VoiceKey,
     embeddings: Vec<f32>,
 }
 
@@ -106,9 +129,7 @@ enum SnapshotTensor {
 }
 
 struct CachedConditioning {
-    samples_ptr: usize,
-    samples_len: usize,
-    sample_rate: i32,
+    key: VoiceKey,
     state: Vec<(StateSpec, SnapshotTensor)>,
 }
 
@@ -459,24 +480,19 @@ impl AprilPocketTts {
 
     /// EXPERIMENTAL (latency): return a fresh Flow LM state conditioned on
     /// the reference voice, restoring a cached snapshot when the same voice
-    /// samples were conditioned before. Keyed identically to `cached_voice`.
+    /// samples were conditioned before. Keyed by voice content, like
+    /// `cached_voice` — never by buffer address.
     fn conditioned_flow_state(&mut self, style: &VoiceStyle) -> Result<Vec<StateValue>, String> {
-        let key = (
-            style.samples.as_ptr() as usize,
-            style.samples.len(),
-            style.sample_rate,
-        );
+        let key = voice_key(style);
         if let Some(cached) = &self.cached_conditioning {
-            if (cached.samples_ptr, cached.samples_len, cached.sample_rate) == key {
+            if cached.key == key {
                 return restore_state(&cached.state);
             }
         }
         let voice_embeddings = self.voice_embeddings(style)?;
         let state = self.condition_voice(&voice_embeddings)?;
         self.cached_conditioning = Some(CachedConditioning {
-            samples_ptr: key.0,
-            samples_len: key.1,
-            sample_rate: key.2,
+            key,
             state: snapshot_state(&state)?,
         });
         Ok(state)
@@ -698,13 +714,9 @@ impl AprilPocketTts {
     }
 
     fn voice_embeddings(&mut self, style: &VoiceStyle) -> Result<Vec<f32>, String> {
-        let key = (
-            style.samples.as_ptr() as usize,
-            style.samples.len(),
-            style.sample_rate,
-        );
+        let key = voice_key(style);
         if let Some(cached) = &self.cached_voice {
-            if (cached.samples_ptr, cached.samples_len, cached.sample_rate) == key {
+            if cached.key == key {
                 return Ok(cached.embeddings.clone());
             }
         }
@@ -745,9 +757,7 @@ impl AprilPocketTts {
         embeddings.extend_from_slice(&self.bos_embedding);
         embeddings.extend_from_slice(encoded);
         self.cached_voice = Some(CachedVoice {
-            samples_ptr: key.0,
-            samples_len: key.1,
-            sample_rate: key.2,
+            key,
             embeddings: embeddings.clone(),
         });
         Ok(embeddings)
@@ -1214,6 +1224,120 @@ mod tests {
     fn generation_frame_estimate_scales_with_token_count() {
         assert_eq!(estimate_max_frames(3, 12.5), 38);
         assert_eq!(estimate_max_frames(300, 12.5), 1_275);
+    }
+
+    /// Regression (review finding): the voice caches must key on CONTENT.
+    /// Voice switching clones and drops sample buffers, so a new voice with
+    /// the same length and rate can land at a recycled address — an
+    /// address-based key would then restore the previous voice's state and
+    /// speak with the wrong voice.
+    #[test]
+    fn voice_key_is_content_based_not_address_based() {
+        let style_a = VoiceStyle {
+            samples: vec![0.1, -0.2, 0.3, -0.4],
+            sample_rate: 24_000,
+        };
+        // Same length, same rate, different content — MUST key differently,
+        // regardless of what address the allocator hands out.
+        let style_b = VoiceStyle {
+            samples: vec![0.4, -0.3, 0.2, -0.1],
+            sample_rate: 24_000,
+        };
+        assert_ne!(voice_key(&style_a), voice_key(&style_b));
+
+        // Same content in a fresh allocation — MUST key identically, so the
+        // cache still hits across clones of the same voice.
+        let style_a_clone = VoiceStyle {
+            samples: style_a.samples.clone(),
+            sample_rate: style_a.sample_rate,
+        };
+        assert_ne!(
+            style_a.samples.as_ptr(),
+            style_a_clone.samples.as_ptr(),
+            "clone must be a distinct allocation for this test to mean anything"
+        );
+        assert_eq!(voice_key(&style_a), voice_key(&style_a_clone));
+
+        // Same content at a different rate is a different voice identity.
+        let style_a_resampled = VoiceStyle {
+            samples: style_a.samples.clone(),
+            sample_rate: 16_000,
+        };
+        assert_ne!(voice_key(&style_a), voice_key(&style_a_resampled));
+    }
+
+    #[test]
+    #[ignore = "requires BUZZ_POCKET_TEST_MODEL_DIR"]
+    fn switching_between_equal_length_voices_reconditions_the_flow_state() {
+        let dir = std::env::var("BUZZ_POCKET_TEST_MODEL_DIR")
+            .expect("set BUZZ_POCKET_TEST_MODEL_DIR to the verified April bundle");
+        let style_a =
+            crate::pocket::load_voice_style(&Path::new(&dir).join("reference_sample.wav"))
+                .expect("load reference voice");
+        // Voice B: same length, same rate, different content (reversed
+        // samples) — the exact shape an address-recycling collision takes.
+        let style_b = VoiceStyle {
+            samples: style_a.samples.iter().rev().copied().collect(),
+            sample_rate: style_a.sample_rate,
+        };
+        assert_eq!(style_a.samples.len(), style_b.samples.len());
+
+        // Engine 1: condition A (primes both caches), then switch to B.
+        let mut engine = AprilPocketTts::load(Path::new(&dir), 1).expect("load April bundle");
+        let state_a = snapshot_state(
+            &engine
+                .conditioned_flow_state(&style_a)
+                .expect("condition A"),
+        )
+        .expect("snapshot A");
+        let state_b_after_switch = snapshot_state(
+            &engine
+                .conditioned_flow_state(&style_b)
+                .expect("condition B"),
+        )
+        .expect("snapshot B after switch");
+
+        // Engine 2: fresh process conditions B with no cache in play.
+        let mut fresh = AprilPocketTts::load(Path::new(&dir), 1).expect("load April bundle");
+        let state_b_fresh = snapshot_state(
+            &fresh
+                .conditioned_flow_state(&style_b)
+                .expect("condition B fresh"),
+        )
+        .expect("snapshot B fresh");
+
+        // The switched state must equal a from-scratch conditioning of B and
+        // must NOT be A's cached state.
+        assert!(
+            snapshots_equal(&state_b_after_switch, &state_b_fresh),
+            "switching voices must recondition, not replay the cache"
+        );
+        assert!(
+            !snapshots_equal(&state_b_after_switch, &state_a),
+            "equal-length distinct voices must produce distinct conditioning"
+        );
+    }
+
+    fn snapshots_equal(
+        a: &[(StateSpec, SnapshotTensor)],
+        b: &[(StateSpec, SnapshotTensor)],
+    ) -> bool {
+        // f32 compares bitwise: state tensors legitimately contain NaN fill,
+        // and NaN != NaN under float equality would make identical states
+        // compare unequal.
+        a.len() == b.len()
+            && a.iter().zip(b).all(|((_, ta), (_, tb))| match (ta, tb) {
+                (SnapshotTensor::F32(sa, da), SnapshotTensor::F32(sb, db)) => {
+                    sa == sb
+                        && da.len() == db.len()
+                        && da.iter().zip(db).all(|(x, y)| x.to_bits() == y.to_bits())
+                }
+                (SnapshotTensor::I64(sa, da), SnapshotTensor::I64(sb, db)) => sa == sb && da == db,
+                (SnapshotTensor::Bool(sa, da), SnapshotTensor::Bool(sb, db)) => {
+                    sa == sb && da == db
+                }
+                _ => false,
+            })
     }
 
     #[test]
