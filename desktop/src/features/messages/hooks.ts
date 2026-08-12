@@ -427,6 +427,7 @@ export function useSendMessageMutation(
       mediaTags?: string[][];
       sentFromThreadRootId?: string | null;
       sentFromThreadRootExcerpt?: string | null;
+      transport?: "auto" | "http";
     },
     MessageQueryContext | undefined
   >({
@@ -439,6 +440,7 @@ export function useSendMessageMutation(
       mediaTags,
       sentFromThreadRootId,
       sentFromThreadRootExcerpt,
+      transport = "auto",
     }) => {
       // Prefer a channel captured by the caller at compose time. Otherwise,
       // resolve a captured id from the shared channel cache so navigation
@@ -498,6 +500,7 @@ export function useSendMessageMutation(
       // the relay's tag validation runs. The WebSocket path emits no extra
       // tags, so emoji-only messages would otherwise lose their emoji tag.
       if (
+        transport === "http" ||
         parentEventId ||
         imetaTags.length > 0 ||
         emojiTags.length > 0 ||
