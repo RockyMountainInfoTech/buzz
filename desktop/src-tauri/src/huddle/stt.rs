@@ -166,27 +166,12 @@ impl Drop for SttPipeline {
 /// How many 16 kHz samples of silence before we flush to STT.
 /// 300 ms × 16 000 Hz / 256 samples-per-frame ≈ 19 frames.
 /// Previous value (28 frames / 450 ms) felt sluggish in conversation.
+///
+/// This window is a turn-taking quality knob, not a latency lever: an earlier
+/// env override (`BUZZ_STT_FLUSH_MS`) let it be lowered to 150 ms, which split
+/// natural mid-sentence pauses into separate messages and confused the
+/// listening agents. Reverted — the window is fixed at the production value.
 const SILENCE_FLUSH_FRAMES: usize = 19;
-
-/// EXPERIMENTAL (latency bench): override the silence flush window in ms via
-/// `BUZZ_STT_FLUSH_MS`. Default preserves the production 300 ms window.
-/// One VAD frame = 256 samples at 16 kHz = 16 ms. Rounds UP to whole frames so
-/// an override of 300 yields the production 19 frames (304 ms), not 18 — a
-/// truncating divide would make a "production value" control arm one frame
-/// faster than production and silently skew any comparison against it.
-fn silence_flush_frames() -> usize {
-    std::env::var("BUZZ_STT_FLUSH_MS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .map(flush_ms_to_frames)
-        .unwrap_or(SILENCE_FLUSH_FRAMES)
-}
-
-/// Pure ms → VAD-frames conversion for the flush override (16 ms per frame,
-/// rounded up, minimum one frame).
-fn flush_ms_to_frames(ms: usize) -> usize {
-    ms.div_ceil(16).max(1)
-}
 
 /// earshot requires exactly 256 samples per frame at 16 kHz.
 const VAD_FRAME_SAMPLES: usize = 256;
@@ -317,8 +302,8 @@ fn stt_worker(
     let mut voiced_frames = 0;
     // Timestamp when TTS last stopped — used for the playback-tail cooldown.
     let mut tts_stopped_at: Option<std::time::Instant> = None;
-    // Resolved once: silence flush window (frames), env-overridable for the bench.
-    let flush_frames = silence_flush_frames();
+    // Silence flush window (frames) — fixed at the production value.
+    let flush_frames = SILENCE_FLUSH_FRAMES;
     // EXPERIMENTAL: speculative decode result + the voiced-frame count it was
     // computed at. Valid only while no new voiced frame has arrived since.
     let speculative_enabled = stt_speculative_decode();
@@ -445,8 +430,11 @@ fn resample_chunk(resampler: &mut rubato::Fft<f32>, chunk_48k: &[f32]) -> Vec<f3
 ///   - After TTS stops, a cooldown prevents tail audio from being transcribed.
 ///
 /// When `ptt_active` is `Some`, input is accepted while either the shortcut is
-/// held or the microphone is manually unmuted. Manual-open input keeps normal
-/// VAD pause flushing; shortcut-only input flushes when the shortcut closes.
+/// held or the microphone is manually unmuted. A held shortcut is an explicit
+/// "I am not done talking" signal, so silence NEVER flushes while it is held —
+/// even when the microphone is also manually open. The utterance flushes on
+/// shortcut release (the transmit-edge flush in the worker loop) or, with a
+/// manually open mic, via normal VAD pause flushing once the shortcut is up.
 #[allow(clippy::too_many_arguments)]
 fn process_16k_samples(
     samples: &[f32],
@@ -475,13 +463,18 @@ fn process_16k_samples(
         let is_speech = prob > VAD_THRESHOLD;
 
         let manually_open = manual_mic_unmuted.is_some_and(|manual| manual.load(Ordering::Acquire));
+        let ptt_held = ptt_active.is_some_and(|ptt| ptt.load(Ordering::Acquire));
         // Shortcut-enabled mode accepts input from either the held shortcut or
         // a manually open microphone.
-        let is_speech = if let Some(ptt) = ptt_active {
-            is_speech && (ptt.load(Ordering::Acquire) || manually_open)
+        let is_speech = if ptt_active.is_some() {
+            is_speech && (ptt_held || manually_open)
         } else {
             is_speech
         };
+        // A held shortcut means "I am not done talking": silence never ends
+        // the utterance while it is held. VAD pause flushing applies in pure
+        // VAD mode, or with a manually open mic once the shortcut is up.
+        let vad_flush_allowed = vad_flush_allowed(ptt_active.is_some(), manually_open, ptt_held);
 
         let tts_playing = tts_active.load(Ordering::Acquire);
 
@@ -546,15 +539,15 @@ fn process_16k_samples(
             // speculative result above.
             if speculative_enabled
                 && speculative.is_none()
-                && (ptt_active.is_none() || manually_open)
+                && vad_flush_allowed
                 && has_enough_voiced_audio(*voiced_frames)
             {
                 speculative.replace((decode_speech(recognizer, speech_buf), *voiced_frames));
             }
 
-            // A manually open microphone behaves like normal VAD. A
-            // shortcut-only transmission stays grouped until key release.
-            if (ptt_active.is_none() || manually_open) && *silence_frames >= flush_frames {
+            // A manually open microphone behaves like normal VAD. A held
+            // shortcut keeps the utterance grouped until key release.
+            if vad_flush_allowed && *silence_frames >= flush_frames {
                 // End of utterance — transcribe (or emit the speculative decode).
                 match speculative.take() {
                     Some((text, decoded_at)) if decoded_at == *voiced_frames => {
@@ -612,6 +605,17 @@ fn has_enough_voiced_audio(voiced_frames: usize) -> bool {
     voiced_frames >= MIN_VOICED_FRAMES
 }
 
+/// Whether a silence run may end the current utterance and flush it to STT.
+///
+/// Pure VAD mode (no shortcut configured) always allows pause flushing. When
+/// the push-to-talk shortcut is configured, a held shortcut is an explicit
+/// "I am not done talking" signal, so silence never flushes while it is held
+/// — even if the microphone is also manually open. A manually open mic with
+/// the shortcut up behaves like normal VAD.
+fn vad_flush_allowed(ptt_mode: bool, manually_open: bool, ptt_held: bool) -> bool {
+    !ptt_mode || (manually_open && !ptt_held)
+}
+
 /// Convert raw bytes (f32 LE) to f32 samples.
 /// Caller should ensure `bytes.len() % 4 == 0`; extra bytes are silently truncated.
 ///
@@ -630,9 +634,7 @@ use super::drain_until_shutdown;
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        flush_ms_to_frames, has_enough_voiced_audio, MIN_VOICED_FRAMES, SILENCE_FLUSH_FRAMES,
-    };
+    use super::{has_enough_voiced_audio, vad_flush_allowed, MIN_VOICED_FRAMES};
 
     #[test]
     fn short_vad_blips_do_not_reach_the_recognizer() {
@@ -642,17 +644,17 @@ mod tests {
     }
 
     #[test]
-    fn flush_override_at_production_ms_matches_production_frames() {
-        // 300 ms must reproduce the production 19-frame window, not truncate
-        // to 18 — otherwise a "control arm" set to the production value is
-        // one frame faster than production.
-        assert_eq!(flush_ms_to_frames(300), SILENCE_FLUSH_FRAMES);
-        // Exact multiples stay exact; everything else rounds up.
-        assert_eq!(flush_ms_to_frames(304), 19);
-        assert_eq!(flush_ms_to_frames(288), 18);
-        assert_eq!(flush_ms_to_frames(16), 1);
-        assert_eq!(flush_ms_to_frames(17), 2);
-        // Degenerate override still flushes.
-        assert_eq!(flush_ms_to_frames(0), 1);
+    fn held_push_to_talk_never_silence_flushes() {
+        // Pure VAD mode: silence always ends the utterance.
+        assert!(vad_flush_allowed(false, false, false));
+        // Shortcut configured, nothing transmitting: nothing to flush anyway,
+        // but the pause path stays closed.
+        assert!(!vad_flush_allowed(true, false, false));
+        // Shortcut held: "I am not done talking" — never flush on silence,
+        // regardless of the manual mic state.
+        assert!(!vad_flush_allowed(true, false, true));
+        assert!(!vad_flush_allowed(true, true, true));
+        // Manually open mic with the shortcut up: normal VAD behavior.
+        assert!(vad_flush_allowed(true, true, false));
     }
 }
