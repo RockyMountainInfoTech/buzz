@@ -98,8 +98,8 @@ function StepConfigFields({
               value={step.channel ?? ""}
             />
             <p className="text-xs text-muted-foreground">
-              Leave empty to use the trigger channel. Webhook runs and manual
-              Trigger runs need an explicit channel override.
+              Defaults to the trigger channel. Webhook and manual triggers
+              require a channel.
             </p>
             {triggerType === "webhook" && !(step.channel ?? "").trim() ? (
               <p className="text-xs text-amber-700">
@@ -290,21 +290,8 @@ function StepConfigFields({
   }
 }
 
-function SectionHeading({
-  description,
-  title,
-}: {
-  description: string;
-  title: string;
-}) {
-  return (
-    <div className="space-y-1">
-      <h4 className="text-sm font-semibold text-foreground">{title}</h4>
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        {description}
-      </p>
-    </div>
-  );
+function SectionHeading({ title }: { title: string }) {
+  return <h4 className="text-sm font-semibold text-foreground">{title}</h4>;
 }
 
 export function WorkflowStepCard({
@@ -355,10 +342,6 @@ export function WorkflowStepCard({
       ) : null}
 
       <section className="space-y-4 pb-5">
-        <SectionHeading
-          description="Configure the inputs this action needs."
-          title="Action settings"
-        />
         <StepConfigFields
           disabled={disabled}
           onUpdate={onUpdate}
@@ -369,10 +352,7 @@ export function WorkflowStepCard({
       </section>
 
       <section className="space-y-4 border-t border-border/50 py-5">
-        <SectionHeading
-          description="Optionally limit when this step runs and how long it may take."
-          title="Run controls"
-        />
+        <SectionHeading title="Run controls" />
         <div className="space-y-1.5">
           <FieldLabel htmlFor={`${prefix}-condition`}>
             Condition (optional)
@@ -387,9 +367,6 @@ export function WorkflowStepCard({
             placeholder='e.g. str_contains(trigger_text, "deploy")'
             value={step.condition ?? ""}
           />
-          <p className="text-xs text-muted-foreground">
-            Leave empty to run whenever the previous node completes.
-          </p>
         </div>
         <div className="space-y-1.5">
           <FieldLabel htmlFor={`${prefix}-timeout-secs`}>
@@ -407,16 +384,13 @@ export function WorkflowStepCard({
             value={step.timeoutSecs ?? ""}
           />
           <p className="text-xs text-muted-foreground">
-            Leave empty to use the workflow default.
+            Defaults to the workflow timeout.
           </p>
         </div>
       </section>
 
       <section className="space-y-4 border-t border-border/50 pt-5">
-        <SectionHeading
-          description="Use a readable name and stable identifier to maintain this workflow."
-          title="Step details"
-        />
+        <SectionHeading title="Step details" />
         <div className="space-y-1.5">
           <FieldLabel htmlFor={`${prefix}-name`}>Name (optional)</FieldLabel>
           <Input
@@ -429,9 +403,6 @@ export function WorkflowStepCard({
             placeholder="e.g. Notify deployment channel"
             value={step.name ?? ""}
           />
-          <p className="text-xs text-muted-foreground">
-            Shown on the node instead of the action name.
-          </p>
         </div>
         <div className="space-y-1.5">
           <FieldLabel htmlFor={`${prefix}-id`}>Step ID</FieldLabel>
@@ -444,7 +415,7 @@ export function WorkflowStepCard({
             value={step.id}
           />
           <p className="text-xs text-muted-foreground">
-            Unique key used by workflow configuration and history.
+            Used in configuration and run history.
           </p>
         </div>
       </section>

@@ -58,8 +58,7 @@ function TriggerConfigFields({
             value={trigger.filter ?? ""}
           />
           <p className="text-xs text-muted-foreground">
-            Run only when this evalexpr expression matches. Leave empty to run
-            for every matching event.
+            Evalexpr. Empty matches all events.
           </p>
         </div>
       );
@@ -78,15 +77,12 @@ function TriggerConfigFields({
             placeholder="e.g. thumbsup"
             value={trigger.emoji ?? ""}
           />
-          <p className="text-xs text-muted-foreground">
-            Leave empty to trigger on any reaction.
-          </p>
         </div>
       );
     case "webhook":
       return (
         <p className="text-xs text-muted-foreground">
-          A unique webhook URL will be generated when the workflow is created.
+          A unique URL is generated after creation.
         </p>
       );
     case "schedule":
@@ -121,7 +117,7 @@ function TriggerConfigFields({
             />
           </div>
           <p className="text-xs text-muted-foreground">
-            Provide either a cron expression or a simple interval.
+            Use either cron or interval.
           </p>
         </div>
       );
@@ -663,16 +659,7 @@ export function WorkflowFormBuilder({
                           variants={inspectorContentVariants}
                         >
                           {selectedNode.type === "trigger" ? (
-                            <div className="space-y-4">
-                              <div className="space-y-1">
-                                <h4 className="text-sm font-semibold text-foreground">
-                                  Trigger settings
-                                </h4>
-                                <p className="text-xs leading-relaxed text-muted-foreground">
-                                  Configure when this event should start the
-                                  workflow.
-                                </p>
-                              </div>
+                            <div>
                               <TriggerConfigFields
                                 onUpdate={(trigger) =>
                                   updateFormState({ ...formState, trigger })
