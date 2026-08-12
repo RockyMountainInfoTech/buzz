@@ -337,7 +337,11 @@ async fn resolve_buzz_mesh_startup_at(
     }
 }
 
-pub(crate) async fn restore_mesh_sharing(app: &AppHandle, state: &AppState) -> CmdResult<()> {
+pub(crate) async fn restore_mesh_sharing(
+    app: &AppHandle,
+    state: &AppState,
+    owner: Option<crate::commands::WorkspaceTransitionOwner<'_>>,
+) -> CmdResult<()> {
     let Some(mut config) = load_mesh_sharing_config(app)? else {
         return Ok(());
     };
@@ -345,23 +349,51 @@ pub(crate) async fn restore_mesh_sharing(app: &AppHandle, state: &AppState) -> C
         return Ok(());
     }
     config.model_id = mesh_llm::canonical_curated_model_id(&config.model_id).to_string();
-    if state.mesh_llm_runtime.lock().await.is_some() {
-        return Ok(());
-    }
     let relay_url = config
         .relay_url
         .clone()
         .unwrap_or_else(|| relay::relay_ws_url_with_override(state));
+    let runtime_matches = |runtime: &mesh_llm::DesktopMeshRuntime| {
+        runtime
+            .start_request()
+            .relay_url
+            .as_deref()
+            .is_some_and(|bound| bound == relay_url)
+    };
+    {
+        let mut runtime = state.mesh_llm_runtime.lock().await;
+        if runtime.as_ref().is_some_and(runtime_matches) {
+            return Ok(());
+        }
+        if let Some(stale) = runtime.take() {
+            drop(runtime);
+            stale.stop().await.map_err(|error| error.to_string())?;
+        }
+    }
+    if owner.is_some_and(|owner| !owner.is_current()) {
+        return Ok(());
+    }
     let (trusted_owner_ids, join_token) = resolve_buzz_mesh_startup_at(state, &relay_url).await;
+    if owner.is_some_and(|owner| !owner.is_current()) {
+        return Ok(());
+    }
     let mut runtime = state.mesh_llm_runtime.lock().await;
-    if runtime.is_some() {
+    if runtime.as_ref().is_some_and(runtime_matches) {
+        return Ok(());
+    }
+    if let Some(stale) = runtime.take() {
+        drop(runtime);
+        stale.stop().await.map_err(|error| error.to_string())?;
+        runtime = state.mesh_llm_runtime.lock().await;
+    }
+    if owner.is_some_and(|owner| !owner.is_current()) {
         return Ok(());
     }
     if config.start_on_next_launch {
-        // Consume a role-switch request before doing any potentially long model
-        // work. If Buzz exits during that work, the next launch stays stopped.
+        // Keep the role-switch checkpoint armed until the still-current
+        // workspace owner has installed the runtime. A superseded restore must
+        // not consume another transition's retry authority.
         config = pending_new_start_checkpoint(&config);
-        save_mesh_sharing_config(app, &config)?;
     }
     // This is restoration of a previously inference-ready serving node. Keep
     // the enabled checkpoint armed while restoring so a transient startup
@@ -378,6 +410,22 @@ pub(crate) async fn restore_mesh_sharing(app: &AppHandle, state: &AppState) -> C
     let started = mesh_llm::DesktopMeshRuntime::start(request)
         .await
         .map_err(|error| format!("failed to restore Share Compute: {error:#}"))?;
+    if let Some(owner) = owner {
+        let Some(_transition_guard) = owner.lock_if_current() else {
+            drop(runtime);
+            started.stop().await.map_err(|error| error.to_string())?;
+            return Ok(());
+        };
+        *runtime = Some(started);
+        config.enabled = true;
+        config.start_on_next_launch = false;
+        save_mesh_sharing_config(app, &config)?;
+    } else {
+        *runtime = Some(started);
+        config.enabled = true;
+        config.start_on_next_launch = false;
+        save_mesh_sharing_config(app, &config)?;
+    }
     // Install the restored runtime immediately: it is tracked by AppState from
     // here on, so it can never be orphaned. Restoring a previously
     // inference-ready node still has to load ~tens of GB of weights and may
@@ -387,10 +435,6 @@ pub(crate) async fn restore_mesh_sharing(app: &AppHandle, state: &AppState) -> C
     // tore down a node that was simply still warming up. The checkpoint stays
     // armed (`enabled`), so a genuinely broken restore is retried next launch
     // rather than silently turning Share Compute off.
-    *runtime = Some(started);
-    config.enabled = true;
-    config.start_on_next_launch = false;
-    save_mesh_sharing_config(app, &config)?;
     drop(runtime);
     if let Err(error) = wait_for_mesh_inference(&config.model_id).await {
         eprintln!(
@@ -739,7 +783,7 @@ pub(crate) async fn ensure_relay_mesh_for_record(
     if load_mesh_sharing_config(app)?
         .is_some_and(|config| config.enabled && !config.model_id.trim().is_empty())
     {
-        restore_mesh_sharing(app, &state).await?;
+        restore_mesh_sharing(app, &state, None).await?;
         return wait_for_mesh_inference(model_id).await;
     }
 

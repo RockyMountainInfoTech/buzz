@@ -27,7 +27,7 @@ pub(crate) use metadata::{
 };
 
 mod stop;
-pub(crate) use stop::managed_agent_runtime_keys;
+pub(crate) use stop::{managed_agent_runtime_keys, stop_managed_agent_pair};
 pub use stop::{stop_managed_agent_process, stop_managed_agent_workspace_pair};
 
 mod sweep;

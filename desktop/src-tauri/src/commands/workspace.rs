@@ -117,6 +117,36 @@ pub async fn validate_repos_dir(dir: String) -> Result<(), String> {
 pub struct WorkspaceTransitionState {
     generation: AtomicU64,
     commit: Mutex<()>,
+    /// Provider deployments are externally last-write-wins. Serialize the
+    /// complete reconcile so a newer transition waits for stale network work
+    /// to drain, rechecks ownership, and is guaranteed to publish last.
+    provider_reconcile: tokio::sync::Mutex<()>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct WorkspaceTransitionOwner<'a> {
+    transition: &'a WorkspaceTransitionState,
+    generation: u64,
+}
+
+impl<'a> WorkspaceTransitionOwner<'a> {
+    pub(crate) fn is_current(self) -> bool {
+        self.transition.is_current(self.generation)
+    }
+
+    pub(crate) fn lock_if_current(self) -> Option<std::sync::MutexGuard<'a, ()>> {
+        let guard = self
+            .transition
+            .commit
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        self.is_current().then_some(guard)
+    }
+
+    pub(crate) fn while_current<T>(self, action: impl FnOnce() -> T) -> Option<T> {
+        let _guard = self.lock_if_current()?;
+        Some(action())
+    }
 }
 
 impl WorkspaceTransitionState {
@@ -127,6 +157,29 @@ impl WorkspaceTransitionState {
 
     fn is_current(&self, generation: u64) -> bool {
         self.generation.load(Ordering::Acquire) == generation
+    }
+
+    fn owner(&self, generation: u64) -> WorkspaceTransitionOwner<'_> {
+        WorkspaceTransitionOwner {
+            transition: self,
+            generation,
+        }
+    }
+
+    async fn reconcile_provider_if_current<F, Fut, T>(
+        &self,
+        generation: u64,
+        reconcile: F,
+    ) -> Option<T>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
+        let _guard = self.provider_reconcile.lock().await;
+        if !self.is_current(generation) {
+            return None;
+        }
+        Some(reconcile().await)
     }
 
     fn restore_pending_for_current(&self, generation: u64, pending: &AtomicBool) -> bool {
@@ -281,7 +334,16 @@ pub async fn apply_workspace(
     if !workspace_transition_is_current(&state, transition_generation) {
         return Ok(());
     }
-    super::agents::provider_access::reconcile_on_workspace_apply(&restore_app, &state).await?;
+    let Some(reconcile_result) = state
+        .workspace_transition
+        .reconcile_provider_if_current(transition_generation, || {
+            super::agents::provider_access::reconcile_on_workspace_apply(&restore_app, &state)
+        })
+        .await
+    else {
+        return Ok(());
+    };
+    reconcile_result?;
     if !workspace_transition_is_current(&state, transition_generation) {
         return Ok(());
     }
@@ -327,8 +389,12 @@ pub async fn apply_workspace(
                 return;
             }
             if restore_pending {
-                if let Err(error) =
-                    crate::commands::mesh_llm::restore_mesh_sharing(&app, &state).await
+                if let Err(error) = crate::commands::mesh_llm::restore_mesh_sharing(
+                    &app,
+                    &state,
+                    Some(state.workspace_transition.owner(transition_generation)),
+                )
+                .await
                 {
                     eprintln!("buzz-desktop: failed to restore Share Compute: {error}");
                 }
@@ -338,7 +404,13 @@ pub async fn apply_workspace(
                 return;
             }
             if restore_pending {
-                match restore_managed_agents_on_launch(&app, &state.shutdown_started).await {
+                match restore_managed_agents_on_launch(
+                    &app,
+                    &state.shutdown_started,
+                    state.workspace_transition.owner(transition_generation),
+                )
+                .await
+                {
                     Ok(()) => state.workspace_transition.complete_restore_if_current(
                         transition_generation,
                         &state.managed_agent_restore_pending,
@@ -359,7 +431,13 @@ pub async fn apply_workspace(
             if !workspace_transition_is_current(&state, transition_generation) {
                 return;
             }
-            match restore_managed_agents_on_launch(&app, &state.shutdown_started).await {
+            match restore_managed_agents_on_launch(
+                &app,
+                &state.shutdown_started,
+                state.workspace_transition.owner(transition_generation),
+            )
+            .await
+            {
                 Ok(()) => state.workspace_transition.complete_restore_if_current(
                     transition_generation,
                     &state.managed_agent_restore_pending,
@@ -411,5 +489,80 @@ mod tests {
 
         transition.complete_restore_if_current(winner, &pending);
         assert!(!pending.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn supersession_during_managed_agent_restore_blocks_spawn_commit() {
+        let transition = WorkspaceTransitionState::default();
+        let stale = transition.claim_next();
+        let stale_owner = transition.owner(stale);
+        assert!(stale_owner.is_current());
+
+        let winner = transition.claim_next();
+        let mut installed = false;
+        assert_eq!(stale_owner.while_current(|| installed = true), None);
+        assert!(!installed);
+        assert!(transition.owner(winner).is_current());
+    }
+
+    #[test]
+    fn supersession_during_mesh_restore_blocks_runtime_install() {
+        let transition = WorkspaceTransitionState::default();
+        let stale_owner = transition.owner(transition.claim_next());
+        transition.claim_next();
+
+        let mut runtime_relay = None;
+        assert_eq!(
+            stale_owner.while_current(|| runtime_relay = Some("wss://stale.example")),
+            None
+        );
+        assert_eq!(runtime_relay, None);
+    }
+
+    #[tokio::test]
+    async fn newer_provider_reconcile_runs_last_after_delayed_stale_request() {
+        use std::sync::Arc;
+        use tokio::sync::Notify;
+
+        let transition = Arc::new(WorkspaceTransitionState::default());
+        let stale_generation = transition.claim_next();
+        let stale_started = Arc::new(Notify::new());
+        let release_stale = Arc::new(Notify::new());
+        let writes = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+
+        let stale_task = {
+            let transition = transition.clone();
+            let stale_started = stale_started.clone();
+            let release_stale = release_stale.clone();
+            let writes = writes.clone();
+            tokio::spawn(async move {
+                transition
+                    .reconcile_provider_if_current(stale_generation, || async move {
+                        stale_started.notify_one();
+                        release_stale.notified().await;
+                        writes.lock().await.push("stale");
+                    })
+                    .await
+            })
+        };
+        stale_started.notified().await;
+
+        let winner_generation = transition.claim_next();
+        let winner_task = {
+            let transition = transition.clone();
+            let writes = writes.clone();
+            tokio::spawn(async move {
+                transition
+                    .reconcile_provider_if_current(winner_generation, || async move {
+                        writes.lock().await.push("winner");
+                    })
+                    .await
+            })
+        };
+        release_stale.notify_one();
+        stale_task.await.unwrap();
+        winner_task.await.unwrap();
+
+        assert_eq!(*writes.lock().await, vec!["stale", "winner"]);
     }
 }

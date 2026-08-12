@@ -94,12 +94,17 @@ pub fn backfill_persona_snapshots(app: &tauri::AppHandle) -> Result<(), String> 
 pub async fn restore_managed_agents_on_launch(
     app: &tauri::AppHandle,
     shutdown_started: &AtomicBool,
+    owner: crate::commands::WorkspaceTransitionOwner<'_>,
 ) -> Result<(), String> {
-    if shutdown_started.load(Ordering::SeqCst) {
+    if shutdown_started.load(Ordering::SeqCst) || !owner.is_current() {
         return Ok(());
     }
 
     let state = app.state::<AppState>();
+    // Capture the winning workspace relay once. Every candidate key and spawn
+    // in this restore is resolved from this immutable snapshot; mutable global
+    // workspace state is never consulted after an await or supersession.
+    let workspace_relay = crate::relay::relay_ws_url_with_override(&state);
 
     // ── Phase A (under lock): housekeeping + collect agents to restore ──
     let mut agents_to_start: Vec<super::ManagedAgentRecord>;
@@ -112,6 +117,10 @@ pub async fn restore_managed_agents_on_launch(
         if shutdown_started.load(Ordering::SeqCst) {
             return Ok(());
         }
+        let _phase_a_owner = match owner.lock_if_current() {
+            Some(guard) => guard,
+            None => return Ok(()),
+        };
 
         let mut records = load_managed_agents(app)?;
         let mut runtimes = state
@@ -173,23 +182,46 @@ pub async fn restore_managed_agents_on_launch(
 
         let mut to_start = Vec::new();
         for pubkey in &candidates {
-            if let Some(runtime) = runtimes
-                .iter_mut()
-                .find(|(key, _)| key.pubkey == *pubkey)
-                .map(|(_, runtime)| runtime)
-            {
-                if runtime.child.try_wait().ok().flatten().is_none() {
+            let Some(record) = records
+                .iter()
+                .find(|record| record.pubkey == *pubkey)
+                .cloned()
+            else {
+                continue;
+            };
+            let expected_key = {
+                let relay_url =
+                    crate::relay::effective_agent_relay_url(&record.relay_url, &workspace_relay);
+                super::ManagedAgentRuntimeKey::new(record.pubkey.clone(), &relay_url).ok()
+            };
+            let stale_keys: Vec<_> = runtimes
+                .keys()
+                .filter(|key| key.pubkey == *pubkey && Some(*key) != expected_key.as_ref())
+                .cloned()
+                .collect();
+            if !stale_keys.is_empty() {
+                let record = records
+                    .iter_mut()
+                    .find(|record| record.pubkey == *pubkey)
+                    .expect("candidate record remains available");
+                for stale_key in stale_keys {
+                    super::stop_managed_agent_pair(app, record, &mut runtimes, &stale_key)?;
+                }
+                changed = true;
+            }
+            if expected_key.as_ref().is_some_and(|key| {
+                runtimes
+                    .get_mut(key)
+                    .is_some_and(|runtime| runtime.child.try_wait().ok().flatten().is_none())
+            }) {
+                continue;
+            }
+            if let Some(pid) = record.runtime_pid {
+                if super::process_is_running(pid) {
                     continue;
                 }
             }
-            if let Some(record) = records.iter().find(|r| r.pubkey == *pubkey) {
-                if let Some(pid) = record.runtime_pid {
-                    if super::process_is_running(pid) {
-                        continue;
-                    }
-                }
-                to_start.push(record.clone());
-            }
+            to_start.push(record.clone());
         }
         agents_to_start = to_start;
 
@@ -284,23 +316,22 @@ pub async fn restore_managed_agents_on_launch(
         .managed_agent_runtime_transition
         .lock()
         .map_err(|error| error.to_string())?;
-    if shutdown_started.load(Ordering::SeqCst) {
+    if shutdown_started.load(Ordering::SeqCst) || !owner.is_current() {
         return Ok(());
     }
 
     // ── Phase B (transition lock held): resolve commands and spawn in parallel ──
     let spawn_results: Vec<AgentSpawnResult> = std::thread::scope(|scope| {
         let owner_hex_ref = owner_hex.as_deref();
+        let workspace_relay_ref = workspace_relay.as_str();
         let handles: Vec<_> = agents_to_start
             .iter()
-            .filter(|_| !shutdown_started.load(Ordering::SeqCst))
+            .filter(|_| !shutdown_started.load(Ordering::SeqCst) && owner.is_current())
             .map(|record| {
                 let handle = scope.spawn(move || {
-                    let workspace_relay =
-                        crate::relay::relay_ws_url_with_override(&app.state::<AppState>());
                     let relay_url = crate::relay::effective_agent_relay_url(
                         &record.relay_url,
-                        &workspace_relay,
+                        workspace_relay_ref,
                     );
                     let outcome =
                         match super::ManagedAgentRuntimeKey::new(record.pubkey.clone(), &relay_url)
@@ -321,24 +352,30 @@ pub async fn restore_managed_agents_on_launch(
                                         })
                                     })
                                     .unwrap_or(false);
-                                if already_live {
+                                if !owner.is_current() || already_live {
                                     SpawnOutcome::Skipped
                                 } else {
-                                    match super::terminate_untracked_pair_runtime(app, &key)
-                                        .and_then(|()| {
-                                            // F1: restore spawns lazy, matching
-                                            // reconcile and manual start. Eager on
-                                            // restore buys nothing — a crashed
-                                            // mid-turn session is not resumed by an
-                                            // eager child — and silently reintroduces
-                                            // N idle brains on every launch.
-                                            spawn_agent_child(
-                                                app,
-                                                record,
-                                                &key.relay_url,
-                                                true,
-                                                owner_hex_ref,
-                                            )
+                                    match owner
+                                        .while_current(|| {
+                                            super::terminate_untracked_pair_runtime(app, &key)
+                                                .and_then(|()| {
+                                                    // F1: restore spawns lazy, matching
+                                                    // reconcile and manual start. Eager on
+                                                    // restore buys nothing — a crashed
+                                                    // mid-turn session is not resumed by an
+                                                    // eager child — and silently reintroduces
+                                                    // N idle brains on every launch.
+                                                    spawn_agent_child(
+                                                        app,
+                                                        record,
+                                                        &key.relay_url,
+                                                        true,
+                                                        owner_hex_ref,
+                                                    )
+                                                })
+                                        })
+                                        .unwrap_or_else(|| {
+                                            Err("workspace restore superseded".into())
                                         }) {
                                         Ok(process) => {
                                             SpawnOutcome::Spawned(key, Box::new(process))
@@ -376,6 +413,13 @@ pub async fn restore_managed_agents_on_launch(
     let mut successfully_spawned: Vec<String> = Vec::new();
 
     for (pubkey, outcome) in spawn_results {
+        let Some(_install_owner) = owner.lock_if_current() else {
+            if let SpawnOutcome::Spawned(_, mut process) = outcome {
+                let _ = super::terminate_process(process.child.id());
+                let _ = process.child.wait();
+            }
+            continue;
+        };
         match outcome {
             // Skipped means a concurrent reconcile already owns a live child for
             // this pair; leave its runtime and record state untouched.
