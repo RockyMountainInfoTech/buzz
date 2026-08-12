@@ -10560,7 +10560,24 @@ export function maybeInstallE2eTauriMocks() {
       deviceName: state === "running" ? "Mock desktop" : null,
     };
   };
-  let claimedWorkspaceTransitionGeneration = 0;
+  const persistedWorkspaceTransitionGeneration = Number.parseInt(
+    window.sessionStorage.getItem("buzz-e2e-workspace-transition-generation") ??
+      "0",
+    10,
+  );
+  let claimedWorkspaceTransitionGeneration = Number.isFinite(
+    persistedWorkspaceTransitionGeneration,
+  )
+    ? persistedWorkspaceTransitionGeneration
+    : 0;
+  const claimNextWorkspaceTransitionGeneration = () => {
+    claimedWorkspaceTransitionGeneration += 1;
+    window.sessionStorage.setItem(
+      "buzz-e2e-workspace-transition-generation",
+      String(claimedWorkspaceTransitionGeneration),
+    );
+    return claimedWorkspaceTransitionGeneration;
+  };
   let mockImportedVoices: Array<{
     key: string;
     displayName: string;
@@ -11385,12 +11402,7 @@ export function maybeInstallE2eTauriMocks() {
         return activeConfig?.mock?.linkPreviewMetadata ?? null;
       }
       case "claim_workspace_transition":
-        claimedWorkspaceTransitionGeneration = Math.max(
-          claimedWorkspaceTransitionGeneration,
-          (payload as { transitionGeneration?: number }).transitionGeneration ??
-            0,
-        );
-        return;
+        return claimNextWorkspaceTransitionGeneration();
       case "apply_workspace": {
         const applyDelayMs = activeConfig?.mock?.applyCommunityDelayMs ?? 0;
         const delayRelayUrl = activeConfig?.mock?.applyCommunityDelayRelayUrl;
@@ -11402,10 +11414,11 @@ export function maybeInstallE2eTauriMocks() {
           const supersedeRelayUrl =
             activeConfig?.mock?.applyCommunitySupersedeRelayUrl;
           if (supersedeRelayUrl) {
-            claimedWorkspaceTransitionGeneration += 1;
+            const supersedeGeneration =
+              claimNextWorkspaceTransitionGeneration();
             window.__BUZZ_E2E_APPLIED_WORKSPACES__?.push({
               relayUrl: supersedeRelayUrl,
-              transitionGeneration: claimedWorkspaceTransitionGeneration,
+              transitionGeneration: supersedeGeneration,
             });
           }
           await new Promise((resolve) =>

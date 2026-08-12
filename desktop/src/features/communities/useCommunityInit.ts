@@ -121,19 +121,17 @@ export function useCommunityInit(
   // same-relay reconnect during onboarding must not cancel that work, while an
   // actual relay boundary must clear both the queue and its presentation probe.
   const appliedRelayUrlRef = useRef<string | null>(null);
-  // Monotonic ownership token shared with Rust. Every effect claims a newer
-  // generation before asynchronous teardown/apply work can be superseded.
-  const transitionGenerationRef = useRef(0);
+  // Rust issues process-lifetime monotonic ownership tokens. React mounts and
+  // webview reloads do not share a lifetime with the native authority.
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: we intentionally depend on specific properties (id/relayUrl/token/reposDir) — depending on the whole object would trigger resets on name-only changes
   useEffect(() => {
     let cancelled = false;
-    const transitionGeneration = ++transitionGenerationRef.current;
 
     async function init() {
-      // Publish ownership before any teardown await. This reaches the Rust
-      // authority early enough to invalidate an older apply already in flight.
-      await claimWorkspaceTransition(transitionGeneration);
+      // Acquire ownership from the process-lifetime Rust authority before any
+      // teardown await. A webview reload therefore cannot restart at token 1.
+      const transitionGeneration = await claimWorkspaceTransition();
       if (cancelled) return;
 
       if (!activeCommunity) {

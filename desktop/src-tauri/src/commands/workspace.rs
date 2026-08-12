@@ -120,8 +120,8 @@ pub struct WorkspaceTransitionState {
 }
 
 impl WorkspaceTransitionState {
-    fn claim(&self, generation: u64) {
-        self.generation.fetch_max(generation, Ordering::AcqRel);
+    fn claim_next(&self) -> u64 {
+        self.generation.fetch_add(1, Ordering::AcqRel) + 1
     }
 
     fn is_current(&self, generation: u64) -> bool {
@@ -133,11 +133,12 @@ fn workspace_transition_is_current(state: &AppState, generation: u64) -> bool {
     state.workspace_transition.is_current(generation)
 }
 
-/// Claim ownership for a frontend workspace transition before it begins async
-/// teardown. This invalidates an older `apply_workspace` already in flight.
+/// Allocate process-lifetime ownership for a frontend workspace transition
+/// before it begins async teardown. The native authority survives webview and
+/// React remounts, so callers cannot restart generation numbering at one.
 #[tauri::command]
-pub fn claim_workspace_transition(generation: u64, state: State<'_, AppState>) {
-    state.workspace_transition.claim(generation);
+pub fn claim_workspace_transition(state: State<'_, AppState>) -> u64 {
+    state.workspace_transition.claim_next()
 }
 
 /// Apply a workspace's configuration to the backend session.
@@ -163,10 +164,8 @@ pub async fn apply_workspace(
     app: AppHandle,
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
-    // Claim newest intent before any await or blocking work. fetch_max makes a
-    // late-arriving older invocation harmless even if command scheduling is
-    // reordered across Tauri worker threads.
-    state.workspace_transition.claim(transition_generation);
+    // The token was allocated by `claim_workspace_transition`. An apply may
+    // use it only while it remains the newest process-lifetime intent.
     if !workspace_transition_is_current(&state, transition_generation) {
         return Ok(());
     }
@@ -360,15 +359,20 @@ mod tests {
     use super::WorkspaceTransitionState;
 
     #[test]
-    fn newer_workspace_claim_permanently_supersedes_older_generation() {
+    fn workspace_claims_remain_monotonic_across_frontend_epochs() {
         let transition = WorkspaceTransitionState::default();
-        transition.claim(1);
-        assert!(transition.is_current(1));
-        transition.claim(3);
-        assert!(!transition.is_current(1));
-        assert!(transition.is_current(3));
-        transition.claim(2);
-        assert!(!transition.is_current(2));
-        assert!(transition.is_current(3));
+        let first_mount = transition.claim_next();
+        let first_mount_switch = transition.claim_next();
+        assert_eq!(first_mount, 1);
+        assert_eq!(first_mount_switch, 2);
+        assert!(!transition.is_current(first_mount));
+        assert!(transition.is_current(first_mount_switch));
+
+        // A recreated frontend asks native state for a fresh token rather than
+        // restarting its own counter at one.
+        let remounted_frontend = transition.claim_next();
+        assert_eq!(remounted_frontend, 3);
+        assert!(!transition.is_current(first_mount_switch));
+        assert!(transition.is_current(remounted_frontend));
     }
 }

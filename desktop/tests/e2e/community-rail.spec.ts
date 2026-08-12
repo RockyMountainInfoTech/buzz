@@ -946,6 +946,24 @@ test.describe("community rail", () => {
       ]);
   });
 
+  test("a webview reload acquires a newer native workspace generation", async ({
+    page,
+  }) => {
+    await installMockBridge(page, undefined, { skipCommunitySeed: true });
+    await seedCommunities(page, [COMMUNITY_A], COMMUNITY_A.id);
+    await page.goto("/");
+
+    await expect
+      .poll(() => page.evaluate(() => window.__BUZZ_E2E_APPLIED_WORKSPACES__))
+      .toEqual([{ relayUrl: COMMUNITY_A.relayUrl, transitionGeneration: 1 }]);
+
+    await page.reload();
+
+    await expect
+      .poll(() => page.evaluate(() => window.__BUZZ_E2E_APPLIED_WORKSPACES__))
+      .toEqual([{ relayUrl: COMMUNITY_A.relayUrl, transitionGeneration: 2 }]);
+  });
+
   test("leaving the final community returns to setup without resetting identity", async ({
     context,
     page,

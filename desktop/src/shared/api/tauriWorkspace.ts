@@ -1,9 +1,7 @@
 import { invokeTauri } from "./tauri";
 
-export async function claimWorkspaceTransition(
-  transitionGeneration: number,
-): Promise<void> {
-  await invokeTauri("claim_workspace_transition", { transitionGeneration });
+export async function claimWorkspaceTransition(): Promise<number> {
+  return await invokeTauri<number>("claim_workspace_transition");
 }
 
 export async function applyCommunity(
