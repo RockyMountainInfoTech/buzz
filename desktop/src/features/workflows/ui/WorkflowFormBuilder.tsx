@@ -1,4 +1,4 @@
-import { Plus, Trash2, X, Zap } from "lucide-react";
+import { Check, ChevronDown, Plus, Trash2, X, Zap } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import * as React from "react";
 import { createPortal } from "react-dom";
@@ -9,15 +9,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 import { Input } from "@/shared/ui/input";
 import { Switch } from "@/shared/ui/switch";
 import { Textarea } from "@/shared/ui/textarea";
 import { WorkflowStepCard } from "./WorkflowStepCard";
-import { FieldLabel, FormSelect } from "./workflowFormPrimitives";
+import { FieldLabel } from "./workflowFormPrimitives";
 import {
   DEFAULT_FORM_STATE,
   ACTION_LABELS,
@@ -32,7 +30,6 @@ import type {
   ActionType,
   StepFormState,
   TriggerConfig,
-  TriggerType,
   WorkflowFormState,
 } from "./workflowFormTypes";
 
@@ -166,6 +163,52 @@ const inspectorContentVariants = {
   }),
 };
 
+function InspectorTypeMenu<T extends string>({
+  ariaLabel,
+  disabled,
+  labels,
+  onChange,
+  options,
+  value,
+}: {
+  ariaLabel: string;
+  disabled?: boolean;
+  labels: Record<T, string>;
+  onChange: (value: T) => void;
+  options: readonly T[];
+  value: T;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          aria-label={ariaLabel}
+          className="group inline-flex max-w-full items-center gap-1.5 rounded-md py-0.5 text-base font-semibold text-foreground outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+          data-value={value}
+          disabled={disabled}
+          type="button"
+        >
+          <span className="truncate">{labels[value]}</span>
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground opacity-60 transition-opacity group-hover:opacity-100" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" sideOffset={8}>
+        {options.map((option) => (
+          <DropdownMenuItem key={option} onSelect={() => onChange(option)}>
+            <Check
+              className={cn(
+                "h-4 w-4",
+                option === value ? "opacity-100" : "opacity-0",
+              )}
+            />
+            {labels[option]}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function WorkflowNode({
   description,
   disabled,
@@ -177,6 +220,7 @@ function WorkflowNode({
   onRemove,
   selected,
   showTitle = true,
+  subtitle,
   title,
 }: {
   description: string;
@@ -189,6 +233,7 @@ function WorkflowNode({
   onRemove?: () => void;
   selected: boolean;
   showTitle?: boolean;
+  subtitle?: string;
   title: string;
 }) {
   const isNumbered = number !== undefined;
@@ -223,8 +268,13 @@ function WorkflowNode({
           </span>
           <span className="min-w-0 flex-1">
             {showTitle ? (
-              <span className="block text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <span className="block text-2xs font-semibold uppercase tracking-wide text-muted-foreground/70">
                 {title}
+              </span>
+            ) : null}
+            {subtitle ? (
+              <span className="block truncate text-2xs font-semibold uppercase tracking-wide text-muted-foreground/70">
+                {subtitle}
               </span>
             ) : null}
             <span className="block truncate text-sm font-semibold text-foreground">
@@ -265,8 +315,6 @@ function WorkflowNode({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="center" side="right" sideOffset={8}>
-            <DropdownMenuLabel>Add action</DropdownMenuLabel>
-            <DropdownMenuSeparator />
             {ACTION_TYPES.map((action) => (
               <DropdownMenuItem
                 key={action}
@@ -476,8 +524,9 @@ export function WorkflowFormBuilder({
                     />
 
                     {formState.steps.map((step, index) => {
-                      const nodeTitle =
-                        step.name?.trim() || ACTION_LABELS[step.action];
+                      const stepName = step.name?.trim();
+                      const actionLabel = ACTION_LABELS[step.action];
+                      const nodeTitle = stepName || actionLabel;
                       return (
                         <WorkflowNode
                           description={nodeTitle}
@@ -493,6 +542,7 @@ export function WorkflowFormBuilder({
                             selectedNode.index === index
                           }
                           showTitle={false}
+                          subtitle={stepName ? actionLabel : undefined}
                           title={`Step ${index + 1}`}
                         />
                       );
@@ -531,14 +581,36 @@ export function WorkflowFormBuilder({
                             ? "Trigger"
                             : `Step ${selectedNode.index + 1}`}
                         </p>
-                        <h3 className="truncate text-base font-semibold text-foreground">
-                          {selectedNode.type === "trigger"
-                            ? TRIGGER_LABELS[formState.trigger.on]
-                            : selectedStep?.name?.trim() ||
-                              (selectedStep
-                                ? ACTION_LABELS[selectedStep.action]
-                                : "Step")}
-                        </h3>
+                        {selectedNode.type === "trigger" ? (
+                          <InspectorTypeMenu
+                            ariaLabel="Trigger event"
+                            disabled={disabled}
+                            labels={TRIGGER_LABELS}
+                            onChange={(triggerType) =>
+                              updateFormState({
+                                ...formState,
+                                trigger: { on: triggerType },
+                              })
+                            }
+                            options={TRIGGER_TYPES}
+                            value={formState.trigger.on}
+                          />
+                        ) : selectedStep ? (
+                          <InspectorTypeMenu
+                            ariaLabel="Action"
+                            disabled={disabled}
+                            labels={ACTION_LABELS}
+                            onChange={(action) => {
+                              const next = { ...selectedStep, action };
+                              if (action === "call_webhook" && !next.method) {
+                                next.method = "POST";
+                              }
+                              updateStep(selectedNode.index, next);
+                            }}
+                            options={ACTION_TYPES}
+                            value={selectedStep.action}
+                          />
+                        ) : null}
                       </div>
                       <div className="flex items-center gap-1">
                         {selectedNode.type === "step" && selectedStep ? (
@@ -592,27 +664,14 @@ export function WorkflowFormBuilder({
                         >
                           {selectedNode.type === "trigger" ? (
                             <div className="space-y-4">
-                              <div className="space-y-1.5">
-                                <FieldLabel htmlFor="wf-trigger-type">
-                                  Event
-                                </FieldLabel>
-                                <FormSelect
-                                  disabled={disabled}
-                                  id="wf-trigger-type"
-                                  onChange={(value) =>
-                                    updateFormState({
-                                      ...formState,
-                                      trigger: { on: value as TriggerType },
-                                    })
-                                  }
-                                  value={formState.trigger.on}
-                                >
-                                  {TRIGGER_TYPES.map((type) => (
-                                    <option key={type} value={type}>
-                                      {TRIGGER_LABELS[type]}
-                                    </option>
-                                  ))}
-                                </FormSelect>
+                              <div className="space-y-1">
+                                <h4 className="text-sm font-semibold text-foreground">
+                                  Trigger settings
+                                </h4>
+                                <p className="text-xs leading-relaxed text-muted-foreground">
+                                  Configure when this event should start the
+                                  workflow.
+                                </p>
                               </div>
                               <TriggerConfigFields
                                 onUpdate={(trigger) =>

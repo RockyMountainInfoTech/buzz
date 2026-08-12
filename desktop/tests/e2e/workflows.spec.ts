@@ -2,6 +2,14 @@ import { expect, test } from "@playwright/test";
 
 import { installMockBridge } from "../helpers/bridge";
 
+const TRIGGER_OPTION_LABELS: Record<string, string> = {
+  diff_posted: "Diff Posted",
+  message_posted: "Message Posted",
+  reaction_added: "Reaction Added",
+  schedule: "Schedule",
+  webhook: "Webhook",
+};
+
 test.beforeEach(async ({ page }) => {
   await installMockBridge(page);
 });
@@ -38,23 +46,22 @@ async function createWorkflow(
   }
   if (options?.trigger) {
     await dialog.getByRole("button", { name: /^Trigger:/ }).click();
-    await dialog.getByLabel("Event").selectOption(options.trigger);
+    await dialog.getByLabel("Trigger event").click();
+    await page
+      .getByRole("menuitem", { name: TRIGGER_OPTION_LABELS[options.trigger] })
+      .click();
   }
 
   await dialog.getByRole("button", { name: "Add step" }).click();
   await page.getByRole("menuitem", { name: "Delay" }).click();
   if (options?.stepName) {
-    await dialog.getByLabel("Step name (optional)").fill(options.stepName);
+    await dialog.getByLabel("Name (optional)").fill(options.stepName);
   }
   if (options?.stepCondition) {
-    await dialog
-      .getByLabel("Run condition (optional)")
-      .fill(options.stepCondition);
+    await dialog.getByLabel("Condition (optional)").fill(options.stepCondition);
   }
   if (options?.stepTimeoutSecs) {
-    await dialog
-      .getByLabel("Timeout seconds (optional)")
-      .fill(options.stepTimeoutSecs);
+    await dialog.getByLabel("Timeout (seconds)").fill(options.stepTimeoutSecs);
   }
 
   await dialog.getByRole("button", { name: "Create workflow" }).click();
@@ -96,7 +103,7 @@ test("disables autocapitalization in the workflow form", async ({ page }) => {
 
   await dialog.getByRole("button", { name: "Add step" }).click();
   await page.getByRole("menuitem", { name: "Delay" }).click();
-  await expect(dialog.getByLabel("Step name (optional)")).toHaveAttribute(
+  await expect(dialog.getByLabel("Name (optional)")).toHaveAttribute(
     "autocapitalize",
     "off",
   );
@@ -146,16 +153,33 @@ test("opens node configuration in a contextual inspector", async ({ page }) => {
 
   await dialog.getByRole("button", { name: /^Trigger:/ }).click();
   await expect(inspector).toBeVisible();
-  await expect(inspector.getByLabel("Event")).toBeVisible();
+  await expect(inspector.getByLabel("Trigger event")).toHaveAttribute(
+    "data-value",
+    "message_posted",
+  );
 
   await dialog.getByRole("button", { name: "Add step" }).click();
-  await expect(page.getByText("Add action", { exact: true })).toBeVisible();
   await page.getByRole("menuitem", { name: "Send Message" }).click();
   await expect(inspector.getByLabel("Step ID")).toHaveValue("step_1");
-  await expect(inspector.getByLabel("Action")).toHaveValue("send_message");
+  await expect(inspector.getByLabel("Action")).toHaveAttribute(
+    "data-value",
+    "send_message",
+  );
   await expect(inspector.getByLabel("Message text")).toBeVisible();
   await expect(dialog.getByText("End", { exact: true })).toBeVisible();
+
+  await inspector.getByLabel("Action").click();
+  await page.getByRole("menuitem", { name: "Send DM" }).click();
+  await expect(inspector.getByLabel("Action")).toHaveAttribute(
+    "data-value",
+    "send_dm",
+  );
+  await expect(inspector.getByLabel("To (pubkey)")).toBeVisible();
+
   const stepNode = dialog.getByRole("button", { name: /^Step 1:/ });
+  await inspector.getByLabel("Name (optional)").fill("Notify deployer");
+  await expect(stepNode).toContainText("Notify deployer");
+  await expect(stepNode).toContainText("Send DM");
   await expect(stepNode).toHaveAttribute("aria-pressed", "true");
 
   await stepNode.hover();
@@ -164,7 +188,7 @@ test("opens node configuration in a contextual inspector", async ({ page }) => {
   await removeStep.click();
   await expect(stepNode).not.toBeVisible();
   await expect(inspector).toBeVisible();
-  await expect(inspector.getByLabel("Event")).toBeVisible();
+  await expect(inspector.getByLabel("Trigger event")).toBeVisible();
   await expect(dialog.getByText("End", { exact: true })).not.toBeVisible();
 });
 
