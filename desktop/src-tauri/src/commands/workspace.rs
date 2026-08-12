@@ -147,6 +147,20 @@ impl<'a> WorkspaceTransitionOwner<'a> {
         let _guard = self.lock_if_current()?;
         Some(action())
     }
+
+    #[cfg(any(feature = "mesh-llm", test))]
+    pub(crate) fn take_if_current_and<T>(
+        self,
+        slot: &mut Option<T>,
+        should_take: impl FnOnce(&T) -> bool,
+    ) -> Option<T> {
+        let _guard = self.lock_if_current()?;
+        if slot.as_ref().is_some_and(should_take) {
+            slot.take()
+        } else {
+            None
+        }
+    }
 }
 
 impl WorkspaceTransitionState {
@@ -506,17 +520,38 @@ mod tests {
     }
 
     #[test]
-    fn supersession_during_mesh_restore_blocks_runtime_install() {
+    fn stale_owner_cannot_take_winners_mesh_runtime() {
         let transition = WorkspaceTransitionState::default();
         let stale_owner = transition.owner(transition.claim_next());
         transition.claim_next();
+        let mut runtime = Some("winner");
 
-        let mut runtime_relay = None;
         assert_eq!(
-            stale_owner.while_current(|| runtime_relay = Some("wss://stale.example")),
+            stale_owner.take_if_current_and(&mut runtime, |_| true),
             None
         );
-        assert_eq!(runtime_relay, None);
+        assert_eq!(runtime, Some("winner"));
+    }
+
+    #[test]
+    fn owner_superseded_while_waiting_cannot_take_winners_mesh_runtime() {
+        use std::sync::Arc;
+
+        let transition = Arc::new(WorkspaceTransitionState::default());
+        let stale_owner = transition.owner(transition.claim_next());
+        let held = transition.commit.lock().unwrap();
+        let transition_for_claim = transition.clone();
+        let claim = std::thread::spawn(move || transition_for_claim.claim_next());
+        drop(held);
+        let winner = claim.join().unwrap();
+        let mut runtime = Some("winner");
+
+        assert_eq!(
+            stale_owner.take_if_current_and(&mut runtime, |_| true),
+            None
+        );
+        assert_eq!(runtime, Some("winner"));
+        assert!(transition.owner(winner).is_current());
     }
 
     #[tokio::test]

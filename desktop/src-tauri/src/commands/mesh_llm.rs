@@ -365,8 +365,12 @@ pub(crate) async fn restore_mesh_sharing(
         if runtime.as_ref().is_some_and(runtime_matches) {
             return Ok(());
         }
-        if let Some(stale) = runtime.take() {
-            drop(runtime);
+        let stale = match owner {
+            Some(owner) => owner.take_if_current_and(&mut runtime, |_| true),
+            None => runtime.take(),
+        };
+        drop(runtime);
+        if let Some(stale) = stale {
             stale.stop().await.map_err(|error| error.to_string())?;
         }
     }
@@ -381,14 +385,18 @@ pub(crate) async fn restore_mesh_sharing(
     if runtime.as_ref().is_some_and(runtime_matches) {
         return Ok(());
     }
-    if let Some(stale) = runtime.take() {
-        drop(runtime);
+    let stale = match owner {
+        Some(owner) => owner.take_if_current_and(&mut runtime, |_| true),
+        None => runtime.take(),
+    };
+    drop(runtime);
+    if let Some(stale) = stale {
         stale.stop().await.map_err(|error| error.to_string())?;
-        runtime = state.mesh_llm_runtime.lock().await;
     }
     if owner.is_some_and(|owner| !owner.is_current()) {
         return Ok(());
     }
+    runtime = state.mesh_llm_runtime.lock().await;
     if config.start_on_next_launch {
         // Keep the role-switch checkpoint armed until the still-current
         // workspace owner has installed the runtime. A superseded restore must
