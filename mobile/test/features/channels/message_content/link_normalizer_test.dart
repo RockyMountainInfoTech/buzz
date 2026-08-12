@@ -30,6 +30,18 @@ void main() {
     );
   });
 
+  test('does not relink URLs owned by existing Markdown or attributes', () {
+    const httpUrl = 'https://example.com/file.png';
+    expect(
+      normalizeBareLinks(
+        '[label]($httpUrl) ![image]($httpUrl) '
+        'imeta=url=$httpUrl escaped \\$httpUrl',
+      ),
+      '[label]($httpUrl) ![image]($httpUrl) '
+      'imeta=url=$httpUrl escaped \\$httpUrl',
+    );
+  });
+
   group('code boundaries', () {
     final cases = <({String name, String input, String expected})>[
       (

@@ -4,7 +4,7 @@ final _autolinkPattern = RegExp(
   r'<((?:https?://|buzz://(?:message\?|join\?|channel/))[^>]+)>',
 );
 final _bareLinkPattern = RegExp(
-  r'(?<![(\]=])(?:https?://|buzz://(?:message\?|join\?|channel/))[^\s)>\]]+',
+  r'(?:https?://|buzz://(?:message\?|join\?|channel/))[^\s)>\]]+',
 );
 final _trailingPunctuationPattern = RegExp(r'[.,!?:;]+$');
 final _backtickRunPattern = RegExp(r'`+');
@@ -128,6 +128,19 @@ String _normalizeBareLink(String segment, Match match) {
   var trailing = '';
   final isBuzzUrl = matched.startsWith('buzz://');
   final start = match.start;
+
+  // Existing Markdown destinations and imeta attributes already own the URL.
+  // Check the preceding character explicitly instead of using RegExp
+  // lookbehind so this scanner remains portable to older runtimes.
+  if (start > 0) {
+    final previous = segment[start - 1];
+    if (previous == '(' ||
+        previous == '\\' ||
+        previous == ']' ||
+        previous == '=') {
+      return matched;
+    }
+  }
 
   if (isBuzzUrl) {
     final outsidePunctuation = _trailingPunctuationPattern.firstMatch(url);
