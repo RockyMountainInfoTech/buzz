@@ -28,6 +28,7 @@ async function createWorkflow(
   await expect(dialog).toBeVisible();
   await dialog.getByLabel("Workflow name").fill(name);
   await dialog.getByRole("button", { name: "Add step" }).click();
+  await page.getByRole("menuitem", { name: "Delay" }).click();
   await dialog.getByRole("button", { name: "Create workflow" }).click();
   await expect(dialog).not.toBeVisible();
 }

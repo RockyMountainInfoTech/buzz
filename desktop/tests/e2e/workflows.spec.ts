@@ -37,10 +37,12 @@ async function createWorkflow(
     await dialog.getByLabel("Enable after creation").click();
   }
   if (options?.trigger) {
+    await dialog.getByRole("button", { name: /^Trigger:/ }).click();
     await dialog.getByLabel("Event").selectOption(options.trigger);
   }
 
   await dialog.getByRole("button", { name: "Add step" }).click();
+  await page.getByRole("menuitem", { name: "Delay" }).click();
   if (options?.stepName) {
     await dialog.getByLabel("Step name (optional)").fill(options.stepName);
   }
@@ -93,10 +95,40 @@ test("disables autocapitalization in the workflow form", async ({ page }) => {
   );
 
   await dialog.getByRole("button", { name: "Add step" }).click();
+  await page.getByRole("menuitem", { name: "Delay" }).click();
   await expect(dialog.getByLabel("Step name (optional)")).toHaveAttribute(
     "autocapitalize",
     "off",
   );
+});
+
+test("opens node configuration in a contextual inspector", async ({ page }) => {
+  await navigateToWorkflows(page);
+
+  await page.getByRole("button", { name: "Create Workflow" }).click();
+  const dialog = page.getByRole("dialog");
+  const inspector = dialog.getByTestId("workflow-node-inspector");
+
+  await expect(inspector).not.toBeVisible();
+  await expect(dialog.getByText("End", { exact: true })).not.toBeVisible();
+
+  await dialog.getByRole("button", { name: /^Trigger:/ }).click();
+  await expect(inspector).toBeVisible();
+  await expect(inspector.getByLabel("Event")).toBeVisible();
+
+  await dialog.getByRole("button", { name: "Add step" }).click();
+  await expect(page.getByText("Add action", { exact: true })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Send Message" }).click();
+  await expect(inspector.getByLabel("Step ID")).toHaveValue("step_1");
+  await expect(inspector.getByLabel("Action")).toHaveValue("send_message");
+  await expect(inspector.getByLabel("Message text")).toBeVisible();
+  await expect(dialog.getByText("End", { exact: true })).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: /^Step 1:/ }),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  await inspector.getByRole("button", { name: "Close inspector" }).click();
+  await expect(inspector).not.toBeVisible();
 });
 
 test("switches between the form and YAML editors", async ({ page }) => {

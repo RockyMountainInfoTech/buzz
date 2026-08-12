@@ -1,5 +1,6 @@
 import { Trash2 } from "lucide-react";
 
+import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
@@ -295,6 +296,8 @@ function StepConfigFields({
 }
 
 export function WorkflowStepCard({
+  bare = false,
+  showHeader = true,
   index,
   disabled,
   onRemove,
@@ -302,6 +305,8 @@ export function WorkflowStepCard({
   step,
   triggerType,
 }: {
+  bare?: boolean;
+  showHeader?: boolean;
   index: number;
   disabled?: boolean;
   onRemove: () => void;
@@ -312,23 +317,30 @@ export function WorkflowStepCard({
   const prefix = `wf-step-${index}`;
 
   return (
-    <div className="space-y-3 rounded-lg border border-border/70 bg-muted/10 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-muted-foreground">
-          Step {index + 1}
-        </span>
-        <Button
-          aria-label="Remove step"
-          className="h-7 w-7"
-          disabled={disabled}
-          onClick={onRemove}
-          size="icon"
-          type="button"
-          variant="ghost"
-        >
-          <Trash2 className="h-4 w-4 text-muted-foreground" />
-        </Button>
-      </div>
+    <div
+      className={cn(
+        "space-y-3",
+        !bare && "rounded-lg border border-border/70 bg-muted/10 p-3",
+      )}
+    >
+      {showHeader ? (
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-medium text-muted-foreground">
+            Step {index + 1}
+          </span>
+          <Button
+            aria-label="Remove step"
+            className="h-7 w-7"
+            disabled={disabled}
+            onClick={onRemove}
+            size="icon"
+            type="button"
+            variant="ghost"
+          >
+            <Trash2 className="h-4 w-4 text-muted-foreground" />
+          </Button>
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-2 gap-2">
         <div className="space-y-1.5">

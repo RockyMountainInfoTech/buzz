@@ -153,8 +153,8 @@ export function WorkflowDialog({
   return (
     <>
       <Dialog onOpenChange={handleOpenChange} open={open}>
-        <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-xl">
-          <DialogHeader className="flex-shrink-0">
+        <DialogContent className="flex h-[88vh] max-h-[88vh] w-[calc(100vw-2rem)] max-w-6xl flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="flex-shrink-0 border-b border-border px-6 py-5 pr-14">
             <DialogTitle>{TITLES[mode]}</DialogTitle>
             <DialogDescription>
               {mode === "edit"
@@ -165,7 +165,7 @@ export function WorkflowDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
+          <div className="min-h-0 flex-1">
             <WorkflowFormBuilder
               activationLabel={
                 mode === "edit" ? "Workflow enabled" : "Enable after creation"
@@ -206,15 +206,15 @@ export function WorkflowDialog({
               }
               yaml={yamlDefinition}
             />
-
-            {mutation.error instanceof Error ? (
-              <p className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {mutation.error.message}
-              </p>
-            ) : null}
           </div>
 
-          <div className="flex flex-shrink-0 justify-end gap-2 border-t border-border pt-4">
+          {mutation.error instanceof Error ? (
+            <p className="mx-6 mb-3 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {mutation.error.message}
+            </p>
+          ) : null}
+
+          <div className="flex flex-shrink-0 justify-end gap-2 border-t border-border px-6 py-4">
             <Button
               onClick={() => handleOpenChange(false)}
               type="button"
