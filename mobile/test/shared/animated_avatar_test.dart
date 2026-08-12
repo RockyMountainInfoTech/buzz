@@ -17,6 +17,8 @@ void main() {
   test('rejects malformed and non-http animated avatar URLs', () {
     expect(parseAnimatedAvatarUrl(posterUrl), isNull);
     expect(parseAnimatedAvatarUrl('$posterUrl#buzz-anim='), isNull);
+    expect(parseAnimatedAvatarUrl('$posterUrl#buzz-anim=%E0%A4%A'), isNull);
+    expect(parseAnimatedAvatarUrl('$posterUrl#buzz-anim=%'), isNull);
     expect(
       parseAnimatedAvatarUrl(
         '$posterUrl#buzz-anim=${Uri.encodeComponent('javascript:alert(1)')}',

@@ -32,6 +32,8 @@ AnimatedAvatarDescriptor? parseAnimatedAvatarUrl(String? url) {
   final String animationUrl;
   try {
     animationUrl = Uri.decodeComponent(encodedAnimationUrl);
+  } on ArgumentError {
+    return null;
   } on FormatException {
     return null;
   }
