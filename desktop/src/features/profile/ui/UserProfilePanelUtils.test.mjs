@@ -7,6 +7,8 @@ import {
   personaManagedAgentUpdate,
   profilePanelTabFromSearch,
   profilePanelViewFromSearch,
+  resolvePersonaInstances,
+  resolveProfileManagedAgent,
 } from "./UserProfilePanelUtils.ts";
 
 function agent(overrides = {}) {
@@ -188,4 +190,110 @@ test("profilePanelTabFromSearch falls back to info for invalid values", () => {
   assert.equal(parseProfilePanelTab("missing"), null);
   assert.equal(profilePanelTabFromSearch("missing"), "info");
   assert.equal(profilePanelTabFromSearch(null), "info");
+});
+
+const archivedPk = "a".repeat(64);
+const livePk = "b".repeat(64);
+const secondLivePk = "c".repeat(64);
+const neverArchived = () => false;
+const isArchivedIn =
+  (...pubkeys) =>
+  (pubkey) =>
+    pubkeys.includes(pubkey.toLowerCase());
+
+test("resolveProfileManagedAgent_explicit_pubkey_returns_exact_record_even_when_archived", () => {
+  const archived = agent({ pubkey: archivedPk });
+  const live = agent({ pubkey: livePk });
+  assert.equal(
+    resolveProfileManagedAgent(
+      [archived, live],
+      { pubkey: archivedPk },
+      isArchivedIn(archivedPk),
+    ),
+    archived,
+  );
+});
+
+test("resolveProfileManagedAgent_persona_fallback_skips_archived_and_lands_on_live_sibling", () => {
+  const archived = agent({ pubkey: archivedPk });
+  const live = agent({ pubkey: livePk });
+  // Archived record is first in file order but must not win the click.
+  assert.equal(
+    resolveProfileManagedAgent(
+      [archived, live],
+      { persona: { id: "persona-1" } },
+      isArchivedIn(archivedPk),
+    ),
+    live,
+  );
+});
+
+test("resolveProfileManagedAgent_persona_fallback_returns_first_when_all_archived", () => {
+  const first = agent({ pubkey: archivedPk });
+  const second = agent({ pubkey: livePk });
+  assert.equal(
+    resolveProfileManagedAgent(
+      [first, second],
+      { persona: { id: "persona-1" } },
+      isArchivedIn(archivedPk, livePk),
+    ),
+    first,
+  );
+});
+
+test("resolveProfileManagedAgent_persona_fallback_shows_first_when_archive_state_unknown", () => {
+  const first = agent({ pubkey: archivedPk });
+  const second = agent({ pubkey: livePk });
+  // Fail-open: predicate returns false while the snapshot loads.
+  assert.equal(
+    resolveProfileManagedAgent(
+      [first, second],
+      { persona: { id: "persona-1" } },
+      neverArchived,
+    ),
+    first,
+  );
+});
+
+test("resolvePersonaInstances_filters_archived_siblings", () => {
+  const archived = agent({ pubkey: archivedPk });
+  const live = agent({ pubkey: livePk });
+  const anotherLive = agent({ pubkey: secondLivePk });
+  assert.deepEqual(
+    resolvePersonaInstances(
+      archived,
+      [archived, live, anotherLive],
+      isArchivedIn(archivedPk),
+    ),
+    [live, anotherLive],
+  );
+});
+
+test("resolvePersonaInstances_all_archived_falls_back_to_full_sibling_set", () => {
+  const first = agent({ pubkey: archivedPk });
+  const second = agent({ pubkey: livePk });
+  assert.deepEqual(
+    resolvePersonaInstances(
+      first,
+      [first, second],
+      isArchivedIn(archivedPk, livePk),
+    ),
+    [first, second],
+  );
+});
+
+test("resolvePersonaInstances_unknown_archive_state_shows_all_rows", () => {
+  const first = agent({ pubkey: archivedPk });
+  const second = agent({ pubkey: livePk });
+  assert.deepEqual(
+    resolvePersonaInstances(first, [first, second], neverArchived),
+    [first, second],
+  );
+});
+
+test("resolvePersonaInstances_agent_without_persona_returns_only_itself", () => {
+  const solo = agent({ pubkey: livePk, personaId: null });
+  assert.deepEqual(resolvePersonaInstances(solo, [solo], neverArchived), [
+    solo,
+  ]);
 });

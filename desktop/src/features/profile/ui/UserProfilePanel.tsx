@@ -37,7 +37,10 @@ import {
   type PersonaDialogState,
 } from "@/features/agents/ui/personaDialogState";
 import { useChannelsQuery } from "@/features/channels/hooks";
-import { useIdentityArchive } from "@/features/identity-archive/hooks";
+import {
+  useIdentityArchive,
+  useIsArchivedPredicate,
+} from "@/features/identity-archive/hooks";
 import { usePresenceQuery } from "@/features/presence/hooks";
 import {
   useContactListQuery,
@@ -74,7 +77,9 @@ import {
   type ProfilePanelView,
   resolveAgentInstruction,
   resolvePanelProfile,
+  resolvePersonaInstances,
   resolveProfileDisplayName,
+  resolveProfileManagedAgent,
   truncatePubkey,
   type UserProfilePanelProps,
   useRetainedPersona,
@@ -182,23 +187,21 @@ export function UserProfilePanel({
 
   const personasQuery = usePersonasQuery();
   const managedAgentsQuery = useManagedAgentsQuery({ enabled: true });
-  const managedAgent = React.useMemo(() => {
-    const agents = managedAgentsQuery.data ?? [];
-    if (pubkey) {
-      const pubkeyLower = pubkey.toLowerCase();
-      return agents.find((agent) => agent.pubkey.toLowerCase() === pubkeyLower);
-    }
-    if (persona) {
-      return agents.find((agent) => agent.personaId === persona.id);
-    }
-    return undefined;
-  }, [managedAgentsQuery.data, persona, pubkey]);
-  const personaInstances = React.useMemo(() => {
-    if (!managedAgent?.personaId) return managedAgent ? [managedAgent] : [];
-    return (managedAgentsQuery.data ?? []).filter(
-      (agent) => agent.personaId === managedAgent.personaId,
-    );
-  }, [managedAgent, managedAgentsQuery.data]);
+  const isArchived = useIsArchivedPredicate();
+  const managedAgents = managedAgentsQuery.data ?? [];
+  const managedAgent = React.useMemo(
+    () =>
+      resolveProfileManagedAgent(
+        managedAgents,
+        { persona, pubkey },
+        isArchived,
+      ),
+    [managedAgents, persona, pubkey, isArchived],
+  );
+  const personaInstances = React.useMemo(
+    () => resolvePersonaInstances(managedAgent, managedAgents, isArchived),
+    [managedAgent, managedAgents, isArchived],
+  );
   const resolvedPersonaFromSource = React.useMemo(() => {
     const personaId = persona?.id ?? managedAgent?.personaId;
     if (personaId) {

@@ -157,6 +157,51 @@ export function getRelayAgentChannelIds(
   return agent?.channelIds ?? [];
 }
 
+/**
+ * Resolve the "primary" managed agent a profile click lands on.
+ *
+ * An explicit `pubkey` always wins verbatim — clicking an archived identity's
+ * pubkey means you want that exact record. The persona fallback instead prefers
+ * a live sibling so an archived record early in file order can't hijack the nav
+ * click; it only returns an archived record when every sibling is archived.
+ *
+ * `isArchived` is fail-open (false while the relay snapshot loads), so a cold
+ * start resolves exactly as it did before this filter existed.
+ */
+export function resolveProfileManagedAgent(
+  agents: readonly ManagedAgent[],
+  { persona, pubkey }: { persona?: { id: string }; pubkey?: string | null },
+  isArchived: (pubkey: string) => boolean,
+): ManagedAgent | undefined {
+  if (pubkey) {
+    const pubkeyLower = pubkey.toLowerCase();
+    return agents.find((agent) => agent.pubkey.toLowerCase() === pubkeyLower);
+  }
+  if (persona) {
+    const matches = agents.filter((agent) => agent.personaId === persona.id);
+    return matches.find((agent) => !isArchived(agent.pubkey)) ?? matches[0];
+  }
+  return undefined;
+}
+
+/**
+ * Instances shown for a persona, with relay-archived siblings hidden. Falls
+ * back to the full sibling set when every instance is archived so the persona
+ * is never stranded with an empty list.
+ */
+export function resolvePersonaInstances(
+  managedAgent: ManagedAgent | undefined,
+  agents: readonly ManagedAgent[],
+  isArchived: (pubkey: string) => boolean,
+): ManagedAgent[] {
+  if (!managedAgent?.personaId) return managedAgent ? [managedAgent] : [];
+  const siblings = agents.filter(
+    (agent) => agent.personaId === managedAgent.personaId,
+  );
+  const live = siblings.filter((agent) => !isArchived(agent.pubkey));
+  return live.length > 0 ? live : siblings;
+}
+
 export function buildPersonaDraftProfile(persona: AgentPersona): Profile {
   return {
     pubkey: "",
