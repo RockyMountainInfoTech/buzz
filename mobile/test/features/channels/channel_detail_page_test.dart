@@ -3806,7 +3806,7 @@ void main() {
       await tester.pumpAndSettle();
       final initialPushCount = observer.pushCount;
 
-      await tester.tap(find.text('#random'));
+      await tester.tap(find.text('random'));
       await tester.pumpAndSettle();
 
       expect(observer.pushCount, initialPushCount + 1);
@@ -3838,7 +3838,7 @@ void main() {
       await tester.pumpAndSettle();
 
       channelsNotifier.setChannels([_testChannel]);
-      await tester.tap(find.text('#random'));
+      await tester.tap(find.text('random'));
       await tester.pump();
 
       expect(find.text('Channel could not be opened'), findsOneWidget);
@@ -3892,7 +3892,7 @@ void main() {
       await tester.pumpAndSettle();
       final initialPushCount = observer.pushCount;
 
-      await tester.tap(find.text('#random').last);
+      await tester.tap(find.text('random').last);
       await tester.pumpAndSettle();
 
       expect(observer.pushCount, initialPushCount + 1);

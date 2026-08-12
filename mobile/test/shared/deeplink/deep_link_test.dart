@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   _inviteTests();
+  _channelTests();
   _buildMessageLinkTests();
 
   group('parseMessageDeepLink', () {
@@ -60,6 +61,67 @@ void main() {
       expect(
         parseMessageDeepLink(Uri.parse('buzz://connect?relay=wss://x')),
         isNull,
+      );
+    });
+  });
+}
+
+void _channelTests() {
+  group('parseChannelDeepLink', () {
+    test('parses canonical channel path', () {
+      expect(
+        parseChannelDeepLink(
+          Uri.parse('buzz://channel/580ca78b-9dae-46f3-8854-bd671853ba32'),
+        ),
+        const ChannelDeepLink(
+          channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
+        ),
+      );
+    });
+
+    test('accepts v7 and canonicalizes uppercase UUIDs', () {
+      expect(
+        parseChannelDeepLink(
+          Uri.parse('buzz://channel/018fdb5d-3a64-7c35-b5f9-4a23e1f9d2d9'),
+        ),
+        const ChannelDeepLink(
+          channelId: '018fdb5d-3a64-7c35-b5f9-4a23e1f9d2d9',
+        ),
+      );
+      expect(
+        parseChannelDeepLink(
+          Uri.parse('buzz://channel/580CA78B-9DAE-46F3-8854-BD671853BA32'),
+        ),
+        const ChannelDeepLink(
+          channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
+        ),
+      );
+    });
+
+    test('rejects missing, extra, query, and fragment forms', () {
+      for (final url in [
+        'buzz://channel',
+        'buzz://channel/',
+        'buzz://channel/one/two',
+        'buzz://channel/one?extra=true',
+        'buzz://channel/one#fragment',
+        'https://channel/one',
+        'buzz://channel/not-a-uuid',
+        'buzz://channel/%2F',
+        'buzz://channel/%00',
+      ]) {
+        expect(parseChannelDeepLink(Uri.parse(url)), isNull, reason: url);
+      }
+    });
+
+    test('is included in the top-level parser', () {
+      expect(
+        parseBuzzDeepLink(
+          Uri.parse('buzz://channel/580ca78b-9dae-46f3-8854-bd671853ba32'),
+        ),
+        const ChannelDeepLink(
+          channelId: '580ca78b-9dae-46f3-8854-bd671853ba32',
+        ),
       );
     });
   });
@@ -290,6 +352,60 @@ void _buildMessageLinkTests() {
         () => buildMessageLink(channelId: 'chan', messageId: ''),
         throwsArgumentError,
       );
+    });
+  });
+  group('entity deep links', () {
+    final owner = 'ab' * 32;
+    final id = 'cd' * 32;
+
+    test('parses repo, PR, and issue permalinks', () {
+      expect(
+        parseEntityDeepLink(Uri.parse('buzz://repo?owner=$owner&d=buzz'))?.type,
+        'repo',
+      );
+      expect(
+        parseEntityDeepLink(
+          Uri.parse('buzz://pr?id=$id&owner=$owner&d=buzz'),
+        )?.eventId,
+        id,
+      );
+      expect(
+        parseEntityDeepLink(
+          Uri.parse('buzz://issue?id=$id&owner=$owner&d=buzz'),
+        )?.type,
+        'issue',
+      );
+    });
+
+    test('rejects malformed entity permalinks', () {
+      expect(
+        parseEntityDeepLink(Uri.parse('buzz://repo?owner=short&d=buzz')),
+        isNull,
+      );
+      expect(
+        parseEntityDeepLink(
+          Uri.parse('buzz://pr?id=$id&owner=$owner&d=buzz&extra=true'),
+        ),
+        isNull,
+      );
+      expect(
+        parseEntityDeepLink(Uri.parse('buzz://repo?owner=$owner&d=a..b')),
+        isNull,
+      );
+      expect(
+        parseEntityDeepLink(
+          Uri.parse('buzz://repo?owner=$owner&d=${'a' * 65}'),
+        ),
+        isNull,
+      );
+      for (final url in [
+        'buzz://repo?owner=$owner&owner=$owner&d=buzz',
+        'buzz://repo?owner=$owner&d=buzz&d=other',
+        'buzz://pr?id=$id&id=$id&owner=$owner&d=buzz',
+        'buzz://issue?id=$id&owner=$owner&owner=$owner&d=buzz',
+      ]) {
+        expect(parseEntityDeepLink(Uri.parse(url)), isNull, reason: url);
+      }
     });
   });
 }
