@@ -450,6 +450,7 @@ export function useSendMessageMutation(
       mentionPubkeys?: string[];
       parentEventId?: string | null;
       mediaTags?: string[][];
+      forceRest?: boolean;
       sentFromThreadRootId?: string | null;
       sentFromThreadRootExcerpt?: string | null;
     },
@@ -462,6 +463,7 @@ export function useSendMessageMutation(
       mentionPubkeys,
       parentEventId,
       mediaTags,
+      forceRest,
       sentFromThreadRootId,
       sentFromThreadRootExcerpt,
     }) => {
@@ -523,6 +525,7 @@ export function useSendMessageMutation(
       // the relay's tag validation runs. The WebSocket path emits no extra
       // tags, so emoji-only messages would otherwise lose their emoji tag.
       if (
+        forceRest ||
         parentEventId ||
         imetaTags.length > 0 ||
         emojiTags.length > 0 ||

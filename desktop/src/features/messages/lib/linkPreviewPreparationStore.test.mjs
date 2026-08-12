@@ -19,9 +19,16 @@ function deferred() {
   return { promise, resolve };
 }
 
-function seed(candidate, promise, settled = false, settledAt = Date.now()) {
+function seed(
+  candidate,
+  promise,
+  settled = false,
+  settledAt = Date.now(),
+  fallbackTag = null,
+) {
   __linkPreviewPreparationTest.jobs.set(candidate.href, {
     promise,
+    fallbackTag,
     settled,
     settledAt: settled ? settledAt : null,
   });
@@ -44,14 +51,12 @@ test("expires settled jobs while retaining in-flight and recent work", () => {
   const now = 1_000_000;
   assert.equal(
     __linkPreviewPreparationTest.isReusableJob(
-      { promise: Promise.resolve(firstTag), settled: false, settledAt: null },
-      now,
-    ),
-    true,
-  );
-  assert.equal(
-    __linkPreviewPreparationTest.isReusableJob(
-      { promise: Promise.resolve(firstTag), settled: true, settledAt: now - 1 },
+      {
+        promise: Promise.resolve(firstTag),
+        fallbackTag: null,
+        settled: false,
+        settledAt: null,
+      },
       now,
     ),
     true,
@@ -60,6 +65,19 @@ test("expires settled jobs while retaining in-flight and recent work", () => {
     __linkPreviewPreparationTest.isReusableJob(
       {
         promise: Promise.resolve(firstTag),
+        fallbackTag: null,
+        settled: true,
+        settledAt: now - 1,
+      },
+      now,
+    ),
+    true,
+  );
+  assert.equal(
+    __linkPreviewPreparationTest.isReusableJob(
+      {
+        promise: Promise.resolve(firstTag),
+        fallbackTag: null,
         settled: true,
         settledAt: now - 5 * 60_000,
       },
@@ -81,17 +99,30 @@ test("keeps successful sibling tags when another URL fails", async () => {
   assert.deepEqual(await preparation.promise, [firstTag]);
 });
 
-test("timeout sends without synthetic suppression and ignores late completion", async () => {
+test("timeout keeps metadata-only fallback and ignores late upload completion", async () => {
   const pending = deferred();
-  seed(first, pending.promise);
+  const fallbackTag = [
+    "link-preview",
+    "snapshot",
+    "1",
+    first.href,
+    "First",
+    "Example",
+    "",
+    "",
+    "",
+    "",
+    "",
+  ];
+  seed(first, pending.promise, false, Date.now(), fallbackTag);
 
   const preparation = prepareBackgroundLinkPreviews([first], 0);
   assert.ok(preparation);
-  assert.deepEqual(await preparation.promise, []);
+  assert.deepEqual(await preparation.promise, [fallbackTag]);
 
   pending.resolve(firstTag);
   await pending.promise;
-  assert.deepEqual(await preparation.promise, []);
+  assert.deepEqual(await preparation.promise, [fallbackTag]);
 });
 
 test("Skip wins completion and resolves exactly once", async () => {

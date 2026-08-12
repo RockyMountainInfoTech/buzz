@@ -327,7 +327,10 @@ test.beforeEach(async ({ page }, testInfo) => {
                                   )
                                     ? 10_000
                                     : testInfo.title.includes(
-                                          "explicit cancellation keeps pending",
+                                          "explicit cancellation suppresses a pending",
+                                        ) ||
+                                        testInfo.title.includes(
+                                          "settled-empty promoted link preview",
                                         )
                                       ? 10_000
                                       : testInfo.title.includes(
@@ -352,7 +355,12 @@ test.beforeEach(async ({ page }, testInfo) => {
                             : undefined;
   const mock = testInfo.title.includes("unresolvable preview")
     ? { linkPreviewMetadata: null, linkPreviewMetadataDelayMs: 800 }
-    : baseMock;
+    : {
+        ...baseMock,
+        ...(testInfo.title.includes("clears Sending after")
+          ? { sendMessageDelayMs: 800 }
+          : {}),
+      };
   await installMockBridge(page, mock);
 });
 
@@ -707,11 +715,9 @@ for (const [pasteShape, wrapUrl] of [
       .locator("[data-composer-link-previews]")
       .locator('[data-link-preview="github-pull-request"]');
     await expect(input).toContainText(previewUrl, { timeout: 1_000 });
-    await expect(composerPreview).toHaveAttribute(
-      "data-state",
-      /^(processing|done)$/,
-      { timeout: 1_000 },
-    );
+    await expect(
+      composerPreview.locator('[data-slot="attachment"]'),
+    ).toHaveAttribute("data-state", /^(processing|done)$/, { timeout: 1_000 });
     await expect(page.getByTestId("send-message")).toBeEnabled();
   });
 }
@@ -859,7 +865,7 @@ test("unresolvable preview disappears after the terminal miss", async ({
   await expect(row.locator("[data-link-preview]")).toHaveCount(0);
 });
 
-test("explicit cancellation keeps pending link preview from silently sending bare", async ({
+test("explicit cancellation suppresses a pending link preview and sends without it", async ({
   page,
 }) => {
   const previewUrl = "https://github.com/block/buzz/pull/3246?send=pending";
@@ -899,17 +905,16 @@ test("explicit cancellation keeps pending link preview from silently sending bar
     "hidden",
   );
 
-  // The mock metadata takes ten seconds, well beyond the former two-second
-  // escape. Send must remain locked while the visible card is pending; network
-  // may not silently convert this event to a bare link.
-  await expect(send).toBeDisabled();
+  // The mock metadata takes ten seconds. Submit is intentionally available:
+  // the pending work is promoted into the floating background preparation UI.
+  await expect(send).toBeEnabled();
   await page.waitForTimeout(2_200);
   await expect(composerPreviews).toHaveAttribute(
     "data-has-pending-snapshots",
     "true",
   );
   await expect(card).toHaveAttribute("data-image-state", "pending");
-  await expect(send).toBeDisabled();
+  await expect(send).toBeEnabled();
 
   // The explicit escape suppresses all previews, preserves the draft link, and
   // makes the durable no-preview intent sendable immediately.
@@ -1003,7 +1008,67 @@ test("Skip wins the upload race and sends without preview", async ({
   expect(calls).toHaveLength(1);
   expect(
     (calls[0]?.payload as { linkPreviewTags?: string[][] }).linkPreviewTags,
-  ).toEqual([["link-preview", "none"]]);
+  ).toEqual([]);
+});
+
+test("promoted link preview send clears Sending after REST publication", async ({
+  page,
+}) => {
+  const previewUrl = "https://github.com/block/buzz/pull/3246?pending=preview";
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  const input = page.getByTestId("message-input");
+  await input.fill(previewUrl);
+  await input.press("Enter");
+
+  const row = page.getByTestId("message-row").last();
+  await expect(row).toContainText(previewUrl);
+  await expect(row).toContainText("Sending…");
+  await expect(row.locator("[data-link-preview]")).toBeVisible();
+  await expect(row).not.toContainText("Sending…");
+
+  const restCalls = await page.evaluate(() =>
+    (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+      (entry) => entry.command === "send_channel_message",
+    ),
+  );
+  expect(restCalls).toHaveLength(1);
+  expect(
+    (restCalls[0]?.payload as { linkPreviewTags?: string[][] }).linkPreviewTags,
+  ).toHaveLength(1);
+});
+
+test("settled-empty promoted link preview send uses REST and clears Sending after Skip", async ({
+  page,
+}) => {
+  const previewUrl = "https://github.com/block/buzz/pull/3246?pending=empty";
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  const input = page.getByTestId("message-input");
+  await input.fill(previewUrl);
+  await input.press("Enter");
+  await page.getByTestId("composer-upload-cancel").click();
+
+  const row = page.getByTestId("message-row").last();
+  await expect(row).toContainText(previewUrl);
+  await expect(row).toContainText("Sending…");
+  await expect(row).not.toContainText("Sending…");
+  await expect(row.locator("[data-link-preview]")).toHaveCount(0);
+
+  const result = await page.evaluate(() => ({
+    restCalls: (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+      (entry) => entry.command === "send_channel_message",
+    ),
+    websocketSends: (window.__BUZZ_E2E_SIGNED_EVENTS__ ?? []).filter(
+      (event) => event.kind === 9,
+    ),
+  }));
+  expect(result.restCalls).toHaveLength(1);
+  expect(
+    (result.restCalls[0]?.payload as { linkPreviewTags?: string[][] })
+      .linkPreviewTags,
+  ).toEqual([]);
+  expect(result.websocketSends).toHaveLength(0);
 });
 
 test("draft auto-send promotes link preview preparation and sends exactly once", async ({
@@ -1150,7 +1215,7 @@ test("pasting a link and immediately pressing Enter prepares it after submit", a
   expect(calls).toHaveLength(1);
 });
 
-test("a snapshot media upload failure still sends without a preview", async ({
+test("a snapshot media upload failure preserves a metadata-only preview", async ({
   page,
 }) => {
   const previewUrl = "https://github.com/block/buzz/pull/3246?upload=fail";
@@ -1162,14 +1227,24 @@ test("a snapshot media upload failure still sends without a preview", async ({
 
   const row = page.getByTestId("message-row").last();
   await expect(row).toContainText(previewUrl);
-  await expect(row.locator("[data-link-preview]")).toHaveCount(0);
+  await expect(row.locator("[data-link-preview]")).toBeVisible();
   const tags = await page.evaluate(() => {
     const call = [...(window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])]
       .reverse()
       .find((entry) => entry.command === "send_channel_message");
     return (call?.payload as { linkPreviewTags?: string[][] }).linkPreviewTags;
   });
-  expect(tags).toEqual([["link-preview", "none"]]);
+  expect(tags).toHaveLength(1);
+  expect(tags?.[0]?.slice(0, 7)).toEqual([
+    "link-preview",
+    "snapshot",
+    "1",
+    previewUrl,
+    "Buzz pull request",
+    "GitHub",
+    "A sender-authored preview snapshot.",
+  ]);
+  expect(tags?.[0]?.slice(7)).toEqual(["", "", "", ""]);
 });
 
 test("editing a message excludes link previews entirely", async ({ page }) => {
@@ -1280,11 +1355,10 @@ test("composer link preview embeds stay attachment-sized while loading and ready
       });
     }
 
-    await expect
-      .poll(() =>
-        card.evaluate((element) => element.getAttribute("data-state")),
-      )
-      .toBe("done");
+    await expect(card.locator('[data-slot="attachment"]')).toHaveAttribute(
+      "data-state",
+      "done",
+    );
     const ready = await card.evaluate((element) => ({
       height: element.getBoundingClientRect().height,
       width: element.getBoundingClientRect().width,

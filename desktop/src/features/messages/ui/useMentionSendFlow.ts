@@ -56,9 +56,7 @@ type UseMentionSendFlowOptions = {
   drafts: Pick<UseDraftsResult, "loadDraft" | "markDraftSent" | "persistDraft">;
   emojiAutocomplete: Pick<UseEmojiAutocompleteResult, "clearEmojis">;
   mentions: UseMentionsResult;
-  onPrepareSendChannel?: (
-    additionalParticipantPubkeys?: string[],
-  ) => Promise<string | null>;
+  onPrepareSendChannel?: (pubkeys?: string[]) => Promise<string | null>;
   onSendRef: React.MutableRefObject<
     (
       content: string,
@@ -69,6 +67,7 @@ type UseMentionSendFlowOptions = {
         parentEventId: string | null;
         threadHeadId: string | null;
       } | null,
+      forceRest?: boolean,
     ) => Promise<void>
   >;
   richText: Pick<
@@ -566,6 +565,7 @@ export function useMentionSendFlow({
             finalOutgoingTags,
             sendChannelId,
             draft.capturedThreadContext,
+            draft.preparedLinkPreviews != null,
           );
           if (signal?.aborted) return;
           if (effectiveExplicitAgentPubkeys.length > 0) {

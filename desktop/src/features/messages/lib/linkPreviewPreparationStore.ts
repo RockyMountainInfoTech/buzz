@@ -16,6 +16,7 @@ const SETTLED_PREVIEW_JOB_TTL_MS = 5 * 60_000;
 
 type PreviewJob = {
   promise: Promise<string[] | null>;
+  fallbackTag: string[] | null;
   settled: boolean;
   settledAt: number | null;
 };
@@ -80,26 +81,41 @@ async function uploadDataUrl(
 
 async function buildSnapshot(
   candidate: SupportedLinkPreview,
+  onMetadataReady: (tag: string[]) => void,
 ): Promise<string[] | null> {
   const metadata = await loadLinkPreviewMetadata(candidate.href);
   if (!metadata) return null;
   const preview = resolveLinkPreview(candidate, metadata);
   if (!preview.snapshotReady) return null;
-  const [image, favicon] = await Promise.all([
-    uploadDataUrl(preview.imageDataUrl, "link-preview-image.png"),
-    uploadDataUrl(preview.faviconDataUrl, "link-preview-favicon.png"),
-  ]);
-  if (image.failed || favicon.failed) return null;
-  return buildLinkPreviewSnapshotTag({
+  const fallbackTag = buildLinkPreviewSnapshotTag({
     canonicalUrl: preview.href,
     title: preview.title,
     siteName: preview.provider,
     description: preview.description ?? "",
-    imageUrl: image.url,
-    imageSha256: image.sha256,
-    faviconUrl: favicon.url,
-    faviconSha256: favicon.sha256,
+    imageUrl: "",
+    imageSha256: "",
+    faviconUrl: "",
+    faviconSha256: "",
   });
+  if (!fallbackTag) return null;
+  onMetadataReady(fallbackTag);
+  const [image, favicon] = await Promise.all([
+    uploadDataUrl(preview.imageDataUrl, "link-preview-image.png"),
+    uploadDataUrl(preview.faviconDataUrl, "link-preview-favicon.png"),
+  ]);
+  if (image.failed || favicon.failed) return fallbackTag;
+  return (
+    buildLinkPreviewSnapshotTag({
+      canonicalUrl: preview.href,
+      title: preview.title,
+      siteName: preview.provider,
+      description: preview.description ?? "",
+      imageUrl: image.url,
+      imageSha256: image.sha256,
+      faviconUrl: favicon.url,
+      faviconSha256: favicon.sha256,
+    }) ?? fallbackTag
+  );
 }
 
 function isReusableJob(job: PreviewJob, now = Date.now()): boolean {
@@ -127,10 +143,13 @@ export function prepareLinkPreview(
 
   const job: PreviewJob = {
     promise: Promise.resolve(null),
+    fallbackTag: null,
     settled: false,
     settledAt: null,
   };
-  job.promise = buildSnapshot(candidate)
+  job.promise = buildSnapshot(candidate, (fallbackTag) => {
+    job.fallbackTag = fallbackTag;
+  })
     .catch(() => null)
     .then((tag) => {
       if (tag === null && jobs.get(candidate.href) === job) {
@@ -174,6 +193,11 @@ export function prepareBackgroundLinkPreviews(
     };
   }
 
+  const fallbackTags = () =>
+    external.flatMap((candidate) => {
+      const tag = jobs.get(candidate.href)?.fallbackTag;
+      return tag ? [tag] : [];
+    });
   const taskId = nextTaskId++;
   let finish: ((tags: string[][]) => void) | null = null;
   let terminal = false;
@@ -193,7 +217,7 @@ export function prepareBackgroundLinkPreviews(
   tasks.set(taskId, { id: taskId, skip });
   publishSnapshot();
 
-  timer = setTimeout(skip, timeoutMs);
+  timer = setTimeout(() => complete(fallbackTags()), timeoutMs);
   void Promise.all(external.map(prepareLinkPreview)).then((tags) => {
     complete(tags.filter((tag): tag is string[] => tag !== null));
   });
