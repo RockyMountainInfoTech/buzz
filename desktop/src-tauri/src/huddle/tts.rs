@@ -41,7 +41,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, SyncSender},
-        Arc, Mutex, MutexGuard, PoisonError,
+        Arc, Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -69,6 +69,9 @@ mod pipeline_controls;
 #[path = "tts_speaker_cancellation.rs"]
 mod speaker_cancellation;
 use speaker_cancellation::*;
+#[path = "tts_streaming.rs"]
+mod streaming;
+use streaming::*;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -451,18 +454,9 @@ fn tts_worker(
     // whenever the player has fully drained — either in the idle timeout
     // arm or on item receipt before synthesis begins.
     let silence_buf_len = (INTER_SENTENCE_SILENCE * SAMPLE_RATE as f32) as usize;
-    // EXPERIMENTAL (latency bench): BUZZ_TTS_STREAMING=1 streams PCM deltas
-    // out of Pocket as they are generated instead of waiting for the full
-    // first-chunk synthesis. BUZZ_TTS_EMIT_FRAMES tunes the delta size in
-    // Flow LM frames (80 ms of audio each). Default 12 = the Mimi decoder's
-    // native chunk, which keeps streamed audio bit-identical to the batch
-    // path; smaller deltas are faster to first audio but diverge (~23 dB SNR
-    // vs batch — decoder intra-chunk lookahead).
-    let tts_streaming = std::env::var("BUZZ_TTS_STREAMING").is_ok_and(|v| v == "1");
-    let stream_emit_frames: usize = std::env::var("BUZZ_TTS_EMIT_FRAMES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(12);
+    // EXPERIMENTAL (latency bench): `Some(emit_frames)` = stream PCM deltas
+    // out of Pocket as they are generated (see tts_streaming.rs).
+    let tts_streaming = streaming_emit_frames();
     // `first_append` = "no audio queued since the player last went idle".
     // Flipped by `build_sentence_append_buffer` on the first real append; the
     // idle branch below uses it to decide when to drop `tts_active` and to
@@ -759,85 +753,38 @@ fn tts_worker(
                 continue;
             }
 
-            // EXPERIMENTAL (latency bench): streaming synthesis path. PCM
-            // deltas are appended to the player as they are generated, so
-            // first audio lands after ~stream_emit_frames of generation
-            // instead of after the whole first-chunk synthesis. Delta
-            // boundary decoration reuses PlaybackChunkAudio: lead-in on the
-            // first delta, fade-out only on the final one.
-            if tts_streaming {
-                let mut playback_audio = PlaybackChunkAudio::new();
-                let mut delta_index = 0usize;
-                let stream_result = engine.synth_chunk_streaming(
+            // EXPERIMENTAL (latency bench): streaming synthesis path — see
+            // tts_streaming.rs for the mechanics and exactness constraints.
+            if let Some(emit_frames) = tts_streaming {
+                let outcome = synthesize_streaming(
+                    &engine,
                     text,
                     &style,
-                    stream_emit_frames,
-                    &mut |samples| {
-                        if cancel.load(Ordering::Acquire)
-                            || voice_cancel.load(Ordering::Acquire)
-                            || shutdown.load(Ordering::Acquire)
-                        {
+                    emit_frames,
+                    (&cancel, &voice_cancel, &shutdown),
+                    StreamingPlayback {
+                        player: &player,
+                        first_append: &mut first_append,
+                        silence_buf_len,
+                        route_id,
+                    },
+                    &mut |prepared| {
+                        if !append_audio(
+                            prepared,
+                            route_id,
+                            speaker_pubkey.as_deref(),
+                            speaker_generation,
+                        ) {
                             return false;
                         }
-                        let chunk_index = delta_index;
-                        delta_index += 1;
-                        if let Some(prepared) = playback_audio.push(
-                            samples,
-                            chunk_index,
-                            &mut first_append,
-                            silence_buf_len,
-                            player.empty(),
-                        ) {
-                            if !append_audio(
-                                prepared,
-                                route_id,
-                                speaker_pubkey.as_deref(),
-                                speaker_generation,
-                            ) {
-                                return false;
-                            }
-                            appended_audio = true;
-                            last_route_id = route_id;
-                        }
+                        appended_audio = true;
+                        last_route_id = route_id;
                         true
                     },
                 );
-                match stream_result {
-                    Ok(true) => {
-                        if let Some(prepared) = playback_audio.finish(
-                            &mut first_append,
-                            silence_buf_len,
-                            player.empty(),
-                        ) {
-                            if !append_audio(
-                                prepared,
-                                route_id,
-                                speaker_pubkey.as_deref(),
-                                speaker_generation,
-                            ) {
-                                first_append = true;
-                                synthesis_outcome = "cancelled";
-                                break 'playback_chunks;
-                            }
-                            appended_audio = true;
-                            last_route_id = route_id;
-                        }
-                    }
-                    Ok(false) => {
-                        eprintln!(
-                            "buzz-desktop: tts stage=synthesis status=cancelled reason=stream_callback route_id={route_id}"
-                        );
-                        first_append = true;
-                        synthesis_outcome = "cancelled";
-                        break 'playback_chunks;
-                    }
-                    Err(_) => {
-                        eprintln!(
-                            "buzz-desktop: tts stage=synthesis status=failed reason=inference route_id={route_id}"
-                        );
-                        synthesis_outcome = "failed";
-                        break 'playback_chunks;
-                    }
+                if let Some(outcome) = outcome {
+                    synthesis_outcome = outcome;
+                    break 'playback_chunks;
                 }
                 continue;
             }
@@ -975,90 +922,6 @@ fn tts_worker(
 
     finish_voice_change_ack(&voice_change_ack);
     tts_active.store(false, Ordering::Release);
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/// Check for cancel or shutdown. Returns `true` if the caller should break/continue.
-/// On cancel: drains the text queue and clears the cancel flag.
-///
-/// `player` pairs the Player with the `player_ops` mutex shared with the
-/// barge-in monitor thread; the cancel/shutdown clear runs under that lock so
-/// it is serialized with the monitor's stale-branch re-check (see the monitor
-/// block in `tts_worker`).
-fn handle_cancel_or_shutdown(
-    cancel_signals: CancelSignals<'_>,
-    shutdown: &AtomicBool,
-    tts_active: &AtomicBool,
-    text_state: CancelTextState<'_>,
-    voice_change_ack: &VoiceChangeAck,
-    active_route_id: Option<u64>,
-    player: Option<(&rodio::Player, &Mutex<()>)>,
-) -> bool {
-    let (cancel, voice_cancel) = cancel_signals;
-    let (text_rx, deferred_text, current_text) = text_state;
-    if shutdown.load(Ordering::Acquire) {
-        eprintln!(
-            "buzz-desktop: tts stage=cancellation reason=shutdown route_id={}",
-            active_route_id.unwrap_or(0)
-        );
-        if let Some((p, ops)) = player {
-            let _ops = lock_player_ops(ops);
-            p.clear();
-        }
-        tts_active.store(false, Ordering::Release);
-        return true;
-    }
-    if cancel.load(Ordering::Acquire) || voice_cancel.load(Ordering::Acquire) {
-        // Serialize with begin_voice_change so the generation boundary and
-        // cancel consumption are observed as one transition.
-        let pending_voice_change = voice_change_ack
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        // Consume at the serialization point. A later barge-in remains true
-        // for the next pass instead of being overwritten after queue cleanup.
-        let barge_in = cancel.swap(false, Ordering::AcqRel);
-        voice_cancel.store(false, Ordering::Release);
-        eprintln!(
-            "buzz-desktop: tts stage=cancellation reason={} route_id={}",
-            if barge_in { "barge_in" } else { "voice_switch" },
-            active_route_id.unwrap_or(0)
-        );
-        let preserve_generation = (!barge_in)
-            .then(|| {
-                pending_voice_change
-                    .as_ref()
-                    .map(|pending| pending.generation)
-            })
-            .flatten();
-        retain_cancelled_text(deferred_text, current_text, text_rx, preserve_generation);
-        if let Some((p, ops)) = player {
-            let _ops = lock_player_ops(ops);
-            // `Player::clear()` removes queued sources AND pauses the player
-            // (rodio 0.22 `clear()` ends with `self.pause()`). With one
-            // persistent Player for the worker's lifetime, the un-pause is
-            // mandatory: without `play()`, every append after a barge-in
-            // would queue silently forever.
-            p.clear();
-            p.play();
-            // Consume the flag under the lock: once released with
-            // `cancel == false`, the monitor's stale branch no-ops instead
-            // of clearing the fresh post-cancel utterance.
-        }
-        tts_active.store(false, Ordering::Release);
-        return true;
-    }
-    false
-}
-
-/// Acquire the `player_ops` lock, recovering from poison.
-///
-/// The data under the mutex is `()` — it only serializes Player mutations —
-/// so a panicked holder leaves nothing inconsistent to observe and recovery
-/// is always safe. Without this, a worker panic would wedge the monitor (or
-/// vice versa) on `unwrap()`.
-fn lock_player_ops(ops: &Mutex<()>) -> MutexGuard<'_, ()> {
-    ops.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
