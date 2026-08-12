@@ -34,10 +34,10 @@ async function createWorkflow(
     await dialog.getByLabel("Description (optional)").fill(options.description);
   }
   if (options?.enabled === false) {
-    await dialog.getByLabel("Workflow is enabled").click();
+    await dialog.getByLabel("Enable after creation").click();
   }
   if (options?.trigger) {
-    await dialog.getByLabel("Trigger").selectOption(options.trigger);
+    await dialog.getByLabel("Event").selectOption(options.trigger);
   }
 
   await dialog.getByRole("button", { name: "Add step" }).click();
@@ -55,10 +55,10 @@ async function createWorkflow(
       .fill(options.stepTimeoutSecs);
   }
 
-  await dialog.getByRole("button", { name: "Create" }).click();
+  await dialog.getByRole("button", { name: "Create workflow" }).click();
 
   await expect(
-    page.getByRole("heading", { name: "Create Workflow" }),
+    page.getByRole("heading", { name: "Create workflow" }),
   ).not.toBeVisible();
 }
 
@@ -97,6 +97,23 @@ test("disables autocapitalization in the workflow form", async ({ page }) => {
     "autocapitalize",
     "off",
   );
+});
+
+test("switches between the form and YAML editors", async ({ page }) => {
+  await navigateToWorkflows(page);
+
+  await page.getByRole("button", { name: "Create Workflow" }).click();
+  const dialog = page.getByRole("dialog");
+  const nameInput = dialog.getByLabel("Workflow name");
+
+  await nameInput.fill("yaml_round_trip");
+  await dialog.getByRole("tab", { name: "YAML" }).click();
+  await expect(dialog.getByLabel("Workflow YAML")).toHaveValue(
+    /name: yaml_round_trip/,
+  );
+
+  await dialog.getByRole("tab", { name: "Form" }).click();
+  await expect(nameInput).toHaveValue("yaml_round_trip");
 });
 
 test("captures disabled diff workflows in the list UI", async ({ page }) => {
@@ -157,7 +174,7 @@ test("edits an existing workflow", async ({ page }) => {
 
   // Dialog should open in edit mode
   await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(page.getByText("Edit Workflow")).toBeVisible();
+  await expect(page.getByText("Edit workflow")).toBeVisible();
 
   // Change the name
   const nameInput = page.getByLabel("Workflow name");
@@ -165,7 +182,7 @@ test("edits an existing workflow", async ({ page }) => {
   await nameInput.fill(updatedName);
 
   // Save
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
 
   // Verify the updated name appears
@@ -184,10 +201,10 @@ test("duplicates a workflow", async ({ page }) => {
 
   // Dialog should open in duplicate mode with "(copy)" suffix
   await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(page.getByText("Duplicate Workflow")).toBeVisible();
+  await expect(page.getByText("Duplicate workflow")).toBeVisible();
 
   // Submit the duplicate
-  await page.getByRole("button", { name: "Create Copy" }).click();
+  await page.getByRole("button", { name: "Create copy" }).click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
 
   // Both the original and copy should exist

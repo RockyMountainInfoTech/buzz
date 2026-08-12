@@ -43,21 +43,21 @@ function getInitialYaml(
 }
 
 const TITLES: Record<DialogMode, string> = {
-  create: "Create Workflow",
-  edit: "Edit Workflow",
-  duplicate: "Duplicate Workflow",
+  create: "Create workflow",
+  edit: "Edit workflow",
+  duplicate: "Duplicate workflow",
 };
 
 const SUBMIT_LABELS: Record<DialogMode, string> = {
-  create: "Create",
-  edit: "Save",
-  duplicate: "Create Copy",
+  create: "Create workflow",
+  edit: "Save changes",
+  duplicate: "Create copy",
 };
 
 const PENDING_LABELS: Record<DialogMode, string> = {
-  create: "Creating...",
-  edit: "Saving...",
-  duplicate: "Creating...",
+  create: "Creating…",
+  edit: "Saving…",
+  duplicate: "Creating…",
 };
 
 export function WorkflowDialog({
@@ -153,56 +153,57 @@ export function WorkflowDialog({
   return (
     <>
       <Dialog onOpenChange={handleOpenChange} open={open}>
-        <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-lg">
+        <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-xl">
           <DialogHeader className="flex-shrink-0">
             <DialogTitle>{TITLES[mode]}</DialogTitle>
             <DialogDescription>
               {mode === "edit"
-                ? "Modify the workflow definition."
-                : channels.length === 1
-                  ? "Create a workflow scoped to this channel."
-                  : "Define a workflow and assign it to a channel."}
+                ? "Update when this workflow runs and what it does."
+                : mode === "duplicate"
+                  ? "Copy this workflow and adjust its details."
+                  : "Automate actions when something happens in a channel."}
             </DialogDescription>
           </DialogHeader>
 
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
-            {showChannelSelector ? (
-              <div className="space-y-1.5">
-                <FieldLabel htmlFor="wf-channel-select">Channel</FieldLabel>
-                <ChannelCombobox
-                  channels={channels}
-                  disabled={mutation.isPending}
-                  id="wf-channel-select"
-                  onChange={(value) => {
-                    mutation.reset();
-                    setSelectedChannelId(value);
-                  }}
-                  value={selectedChannelId}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {selectedChannel
-                    ? `New workflows will belong to ${selectedChannel.name}.`
-                    : "Join or create a channel before adding a workflow."}
-                </p>
-              </div>
-            ) : (showChannelInfo || mode === "edit") && selectedChannel ? (
-              <p className="text-sm text-muted-foreground">
-                {mode === "edit"
-                  ? "Editing workflow in"
-                  : "This workflow will be created in"}{" "}
-                <span className="font-medium text-foreground">
-                  {selectedChannel.name}
-                </span>
-                .
-              </p>
-            ) : null}
-
             <WorkflowFormBuilder
+              activationLabel={
+                mode === "edit" ? "Workflow enabled" : "Enable after creation"
+              }
               disabled={mutation.isPending}
               onChange={(yaml) => {
                 mutation.reset();
                 setYamlDefinition(yaml);
               }}
+              scopeField={
+                showChannelSelector ? (
+                  <div className="space-y-1.5">
+                    <FieldLabel htmlFor="wf-channel-select">Channel</FieldLabel>
+                    <ChannelCombobox
+                      channels={channels}
+                      disabled={mutation.isPending}
+                      id="wf-channel-select"
+                      onChange={(value) => {
+                        mutation.reset();
+                        setSelectedChannelId(value);
+                      }}
+                      value={selectedChannelId}
+                    />
+                    {!selectedChannel ? (
+                      <p className="text-xs text-muted-foreground">
+                        Join or create a channel before adding a workflow.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : (showChannelInfo || mode === "edit") && selectedChannel ? (
+                  <div className="space-y-1">
+                    <FieldLabel>Channel</FieldLabel>
+                    <p className="text-sm font-medium text-foreground">
+                      {selectedChannel.name}
+                    </p>
+                  </div>
+                ) : null
+              }
               yaml={yamlDefinition}
             />
 
