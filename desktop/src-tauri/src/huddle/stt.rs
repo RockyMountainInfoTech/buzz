@@ -170,13 +170,22 @@ const SILENCE_FLUSH_FRAMES: usize = 19;
 
 /// EXPERIMENTAL (latency bench): override the silence flush window in ms via
 /// `BUZZ_STT_FLUSH_MS`. Default preserves the production 300 ms window.
-/// One VAD frame = 256 samples at 16 kHz = 16 ms.
+/// One VAD frame = 256 samples at 16 kHz = 16 ms. Rounds UP to whole frames so
+/// an override of 300 yields the production 19 frames (304 ms), not 18 — a
+/// truncating divide would make a "production value" control arm one frame
+/// faster than production and silently skew any comparison against it.
 fn silence_flush_frames() -> usize {
     std::env::var("BUZZ_STT_FLUSH_MS")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
-        .map(|ms| (ms / 16).max(1))
+        .map(flush_ms_to_frames)
         .unwrap_or(SILENCE_FLUSH_FRAMES)
+}
+
+/// Pure ms → VAD-frames conversion for the flush override (16 ms per frame,
+/// rounded up, minimum one frame).
+fn flush_ms_to_frames(ms: usize) -> usize {
+    ms.div_ceil(16).max(1)
 }
 
 /// earshot requires exactly 256 samples per frame at 16 kHz.
@@ -621,12 +630,29 @@ use super::drain_until_shutdown;
 
 #[cfg(test)]
 mod tests {
-    use super::{has_enough_voiced_audio, MIN_VOICED_FRAMES};
+    use super::{
+        flush_ms_to_frames, has_enough_voiced_audio, MIN_VOICED_FRAMES, SILENCE_FLUSH_FRAMES,
+    };
 
     #[test]
     fn short_vad_blips_do_not_reach_the_recognizer() {
         assert!(!has_enough_voiced_audio(1));
         assert!(!has_enough_voiced_audio(MIN_VOICED_FRAMES - 1));
         assert!(has_enough_voiced_audio(MIN_VOICED_FRAMES));
+    }
+
+    #[test]
+    fn flush_override_at_production_ms_matches_production_frames() {
+        // 300 ms must reproduce the production 19-frame window, not truncate
+        // to 18 — otherwise a "control arm" set to the production value is
+        // one frame faster than production.
+        assert_eq!(flush_ms_to_frames(300), SILENCE_FLUSH_FRAMES);
+        // Exact multiples stay exact; everything else rounds up.
+        assert_eq!(flush_ms_to_frames(304), 19);
+        assert_eq!(flush_ms_to_frames(288), 18);
+        assert_eq!(flush_ms_to_frames(16), 1);
+        assert_eq!(flush_ms_to_frames(17), 2);
+        // Degenerate override still flushes.
+        assert_eq!(flush_ms_to_frames(0), 1);
     }
 }

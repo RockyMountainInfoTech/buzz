@@ -1296,6 +1296,14 @@ mod tests {
                 .expect("condition B"),
         )
         .expect("snapshot B after switch");
+        // Warm hit on the SAME voice: the cached restore must reproduce the
+        // original conditioning bit-for-bit (cache warm == cache cold).
+        let state_b_warm_hit = snapshot_state(
+            &engine
+                .conditioned_flow_state(&style_b)
+                .expect("condition B warm"),
+        )
+        .expect("snapshot B warm hit");
 
         // Engine 2: fresh process conditions B with no cache in play.
         let mut fresh = AprilPocketTts::load(Path::new(&dir), 1).expect("load April bundle");
@@ -1315,6 +1323,11 @@ mod tests {
         assert!(
             !snapshots_equal(&state_b_after_switch, &state_a),
             "equal-length distinct voices must produce distinct conditioning"
+        );
+        // And the warm cache hit must be indistinguishable from recomputing.
+        assert!(
+            snapshots_equal(&state_b_warm_hit, &state_b_fresh),
+            "a warm conditioning-cache hit must equal a cold recompute"
         );
     }
 
