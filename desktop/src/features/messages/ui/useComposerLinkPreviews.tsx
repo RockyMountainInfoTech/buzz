@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ImageOff, LoaderCircle, X } from "lucide-react";
+import { ImageOff, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { getRelayHttpUrl, uploadMediaBytes } from "@/shared/api/tauri";
@@ -28,17 +28,17 @@ import {
   AttachmentTrigger,
 } from "@/shared/ui/attachment";
 import { Button } from "@/shared/ui/button";
+import { Progress } from "@/shared/ui/progress";
+import { Skeleton } from "@/shared/ui/skeleton";
 
 // Idle time after the last keystroke before link-preview resolution runs, so
 // typing a URL does not flicker a card per character (debounce, not throttle:
 // throttle would still fire mid-type).
 const LINK_PREVIEW_DEBOUNCE_MS = 350;
 
-// Upper bound on how long Send stays disabled while a preview is still settling
-// (metadata resolving, or snapshot media uploading). Past this the button
-// re-enables even if the tag never lands, so a dead or slow link never traps
-// the composer — the message then sends as a bare link.
-const SNAPSHOT_SETTLE_DISABLE_CAP_MS = 2000;
+// A preview stays pending until its metadata and snapshot media settle. The
+// visible suppression control is the explicit escape for sending without
+// previews; network timing must never silently change the submitted event.
 
 function previewHostname(href: string): string {
   try {
@@ -54,8 +54,8 @@ function previewHostname(href: string): string {
 // debounce drops A, so keying off live hrefs is what stops "delete A, send
 // replacement text within the window" from leaking A's tag (and media refs)
 // onto a body that no longer contains A. When `suppressed`, emit only the
-// "none" marker. Live hrefs without a ready tag (dead/slow link past the
-// anti-trap cap) are omitted and the message sends as a bare link.
+// "none" marker. An unsuppressed live href without a ready tag can only reach
+// submit after a terminal miss; it is omitted and sends as a bare link.
 export function selectSubmitTags(
   liveHrefs: readonly string[],
   tagsByHref: Record<string, string[]>,
@@ -69,9 +69,11 @@ export function selectSubmitTags(
 }
 
 function ComposerLinkPreviewCard({
+  onSuppress,
   preview,
   tagReady,
 }: {
+  onSuppress: () => void;
   preview: ResolvedLinkPreview;
   tagReady: boolean;
 }) {
@@ -86,71 +88,104 @@ function ComposerLinkPreviewCard({
   // are complete as soon as the recognized entity card exists.
   const snapshotTagReady = Boolean(preview.snapshotReady && tagReady);
   const done = snapshotTagReady || isBuzzEntityPreview(preview);
-  let path = "";
-  try {
-    const url = new URL(preview.href);
-    path = `${url.pathname}${url.search}`;
-  } catch {}
 
   return (
-    <Attachment
-      className="h-[55px] w-80 max-w-full gap-2 overflow-hidden p-0 pr-2 shadow-none"
+    <div
+      className="group/link-preview relative w-80 max-w-full"
       data-image-state={preview.imageState}
       data-link-preview={preview.kind}
       data-link-preview-composer-card=""
       data-snapshot-tag-ready={snapshotTagReady ? "true" : "false"}
-      state={done ? "done" : "processing"}
     >
-      <AttachmentMedia
-        className="h-[55px] w-[55px] rounded-none rounded-l-2xl bg-muted"
-        data-link-preview-thumbnail=""
-        variant="image"
+      <Attachment
+        className="h-[55px] w-full gap-0 overflow-hidden p-0 pr-2 shadow-none"
+        state={done ? "done" : "processing"}
       >
-        {showImage ? (
-          <img
-            alt=""
-            className="h-full w-full object-cover"
-            onError={() => setFailedImageSrc(imageSrc ?? null)}
-            src={imageSrc ?? undefined}
-          />
-        ) : preview.imageState === "pending" ? (
-          <LoaderCircle
-            aria-label="Loading link preview"
-            className="size-4 animate-spin"
-          />
-        ) : preview.faviconDataUrl ? (
-          <img
-            alt=""
-            className="size-7 rounded-md object-contain opacity-70"
-            src={preview.faviconDataUrl}
-          />
-        ) : (
-          <ImageOff aria-hidden="true" className="size-4 opacity-60" />
-        )}
-      </AttachmentMedia>
-      <AttachmentContent>
-        <AttachmentTitle className="line-clamp-1" data-link-preview-hostname="">
-          {done ? preview.title : hostname}
-        </AttachmentTitle>
-        <AttachmentDescription>
-          {done
-            ? preview.provider || hostname
-            : path && path !== "/"
-              ? path
-              : preview.typeLabel}
-        </AttachmentDescription>
-      </AttachmentContent>
-      <AttachmentTrigger asChild>
-        <a
-          aria-label={`Open ${preview.title}`}
-          href={preview.href}
-          rel="noreferrer"
-          target="_blank"
+        <AttachmentMedia
+          className="relative h-[55px] w-[55px] rounded-none rounded-l-2xl border-0 bg-muted"
+          data-link-preview-thumbnail=""
+          variant="image"
         >
-          <span className="sr-only">Open {preview.title}</span>
-        </a>
-      </AttachmentTrigger>
-    </Attachment>
+          {showImage ? (
+            <img
+              alt=""
+              className={`h-full w-full object-cover ${done ? "" : "opacity-50"}`}
+              onError={() => setFailedImageSrc(imageSrc ?? null)}
+              src={imageSrc ?? undefined}
+            />
+          ) : !done ? (
+            <div
+              className="h-full w-full animate-pulse bg-muted"
+              data-testid="link-preview-thumbnail-placeholder"
+            />
+          ) : preview.faviconDataUrl ? (
+            <img
+              alt=""
+              className="size-7 rounded-md object-contain opacity-70"
+              src={preview.faviconDataUrl}
+            />
+          ) : (
+            <ImageOff aria-hidden="true" className="size-4 opacity-60" />
+          )}
+          {!done ? (
+            <div className="absolute inset-x-0 bottom-0 px-1.5 pb-1.5">
+              <Progress
+                aria-label="Loading link preview"
+                className="h-1 bg-foreground/15 [&>div]:bg-foreground/80"
+                data-testid="link-preview-progress"
+                value={null}
+              />
+            </div>
+          ) : null}
+        </AttachmentMedia>
+        <AttachmentContent className="pl-2">
+          {done ? (
+            <>
+              <AttachmentTitle
+                className="line-clamp-1"
+                data-link-preview-hostname=""
+              >
+                {preview.title}
+              </AttachmentTitle>
+              <AttachmentDescription>
+                {preview.provider || hostname}
+              </AttachmentDescription>
+            </>
+          ) : (
+            <div
+              aria-label="Loading link preview details"
+              className="space-y-2"
+              data-testid="link-preview-text-placeholder"
+              role="status"
+            >
+              <Skeleton className="h-3.5 w-3/4" />
+              <Skeleton className="h-2.5 w-1/2" />
+            </div>
+          )}
+        </AttachmentContent>
+        <AttachmentTrigger asChild>
+          <a
+            aria-label={`Open ${preview.title}`}
+            href={preview.href}
+            rel="noreferrer"
+            target="_blank"
+          >
+            <span className="sr-only">Open {preview.title}</span>
+          </a>
+        </AttachmentTrigger>
+      </Attachment>
+      <Button
+        aria-label="Send without link previews"
+        className="absolute -right-1 -top-1 z-20 flex h-4 w-4 items-center justify-center rounded-full bg-foreground p-0 text-background opacity-0 shadow-none transition-opacity hover:bg-foreground group-hover/link-preview:opacity-100 group-focus-within/link-preview:opacity-100 focus-visible:opacity-100 [&_svg]:size-2.5"
+        data-testid="composer-hide-link-previews"
+        onClick={onSuppress}
+        size="icon-xs"
+        title="Send without link previews"
+        type="button"
+      >
+        <X aria-hidden="true" />
+      </Button>
+    </div>
   );
 }
 
@@ -258,7 +293,12 @@ export function useComposerLinkPreviews(content: string, enabled = true) {
   readyTagsByHrefRef.current = readyTags;
   const suppressedRef = React.useRef(suppressed);
   suppressedRef.current = suppressed;
-  const uploadsRef = React.useRef(new Set<string>());
+  const uploadsRef = React.useRef(new Map<string, number>());
+  // Suppression invalidates uploads already in flight. A generation token is
+  // stronger than checking `suppressed` at completion: if the user clears the
+  // draft and later retypes the same URL, an old pre-suppression upload still
+  // must not become the new draft's snapshot.
+  const suppressionGenerationRef = React.useRef(0);
   const activeHrefsRef = React.useRef(new Set<string>());
   activeHrefsRef.current = new Set(candidates.map((preview) => preview.href));
 
@@ -281,13 +321,14 @@ export function useComposerLinkPreviews(content: string, enabled = true) {
 
   React.useEffect(() => {
     for (const preview of previews) {
+      const uploadSuppressionGeneration = suppressionGenerationRef.current;
       if (
         !preview.snapshotReady ||
         readyTags[preview.href] ||
-        uploadsRef.current.has(preview.href)
+        uploadsRef.current.get(preview.href) === uploadSuppressionGeneration
       )
         continue;
-      uploadsRef.current.add(preview.href);
+      uploadsRef.current.set(preview.href, uploadSuppressionGeneration);
       // Upload image and favicon independently so one failure degrades to the
       // surviving media instead of dropping the whole preview. A snapshot tag
       // with empty media fields is valid (renders as text + favicon, or
@@ -306,7 +347,11 @@ export function useComposerLinkPreviews(content: string, enabled = true) {
         ),
       ])
         .then(([image, favicon]) => {
-          if (!activeHrefsRef.current.has(preview.href)) return;
+          if (
+            uploadSuppressionGeneration !== suppressionGenerationRef.current ||
+            !activeHrefsRef.current.has(preview.href)
+          )
+            return;
           const failedMedia = [image.failed, favicon.failed].filter(
             (label): label is "thumbnail" | "favicon" => label !== null,
           );
@@ -335,7 +380,11 @@ export function useComposerLinkPreviews(content: string, enabled = true) {
           setReadyTags((current) => ({ ...current, [preview.href]: tag }));
         })
         .finally(() => {
-          uploadsRef.current.delete(preview.href);
+          if (
+            uploadsRef.current.get(preview.href) === uploadSuppressionGeneration
+          ) {
+            uploadsRef.current.delete(preview.href);
+          }
         });
       void uploadPromise;
     }
@@ -351,7 +400,8 @@ export function useComposerLinkPreviews(content: string, enabled = true) {
   // Send stays disabled across the whole window so the button never flickers
   // ready -> not-ready -> ready (buzz:// links never snapshot, so they never
   // report settling). `imageState === "none"` is terminal (no snapshot), so it
-  // does not block. See the disable cap below for the dead/slow-link escape.
+  // does not block. The visible suppression control is the explicit way to stop
+  // waiting and send the draft without previews.
   const hasResolvingSnapshots =
     !suppressed &&
     previews.some(
@@ -372,32 +422,16 @@ export function useComposerLinkPreviews(content: string, enabled = true) {
         !readyTags[href] &&
         !candidates.some((candidate) => candidate.href === href),
     );
-  const hasSettlingSnapshots =
+  const hasPendingSnapshots =
     hasResolvingSnapshots || hasUnresolvedLiveCandidates;
-  // Re-enable Send once the disable cap elapses even if a preview is still
-  // settling, so a link whose metadata or upload stalls never traps the
-  // composer. Resets whenever settling ends or the live candidate set changes.
-  const [settleDisableExpired, setSettleDisableExpired] = React.useState(false);
-  const liveCandidatesKey = liveCandidatesRef.current.join("\n");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: liveCandidatesKey intentionally restarts the anti-trap cap when the link set changes while still settling, so a replaced/added link gets a fresh disable window rather than inheriting the prior link's near-expired timer.
-  React.useEffect(() => {
-    if (!hasSettlingSnapshots) {
-      setSettleDisableExpired(false);
-      return;
-    }
-    setSettleDisableExpired(false);
-    const timer = window.setTimeout(
-      () => setSettleDisableExpired(true),
-      SNAPSHOT_SETTLE_DISABLE_CAP_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [hasSettlingSnapshots, liveCandidatesKey]);
-  const hasPendingSnapshots = hasSettlingSnapshots && !settleDisableExpired;
   // Ref mirror so a synchronous submit guard can read the pending state on any
   // entry point (Enter, form, auto-submit), not just the reactive button prop.
   const hasPendingSnapshotsRef = React.useRef(hasPendingSnapshots);
   hasPendingSnapshotsRef.current = hasPendingSnapshots;
-  const hideAll = React.useCallback(() => setSuppressed(true), []);
+  const hideAll = React.useCallback(() => {
+    suppressionGenerationRef.current += 1;
+    setSuppressed(true);
+  }, []);
   const previewList = previews.length ? (
     <div
       className="mb-2"
@@ -405,37 +439,24 @@ export function useComposerLinkPreviews(content: string, enabled = true) {
       data-has-pending-snapshots={hasPendingSnapshots ? "true" : "false"}
       data-ready-snapshot-count={readyTagsRef.current.length}
     >
-      <div className="flex max-w-full items-start gap-1">
-        <AttachmentGroup className="max-w-full flex-row flex-wrap items-start overflow-visible pb-0">
-          {previews.map((preview) => (
-            <ComposerLinkPreviewCard
-              key={preview.href}
-              preview={preview}
-              tagReady={Boolean(readyTags[preview.href])}
-            />
-          ))}
-        </AttachmentGroup>
-        <Button
-          aria-label="Hide all link previews"
-          className="mt-1 size-5 shrink-0 rounded-full text-muted-foreground hover:text-foreground [&_svg]:size-3"
-          data-testid="composer-hide-link-previews"
-          onClick={hideAll}
-          size="icon-xs"
-          title="Hide previews"
-          type="button"
-          variant="ghost"
-        >
-          <X aria-hidden="true" />
-        </Button>
-      </div>
+      <AttachmentGroup className="max-w-full flex-row flex-wrap items-start overflow-visible pb-0">
+        {previews.map((preview) => (
+          <ComposerLinkPreviewCard
+            key={preview.href}
+            onSuppress={hideAll}
+            preview={preview}
+            tagReady={Boolean(readyTags[preview.href])}
+          />
+        ))}
+      </AttachmentGroup>
     </div>
   ) : null;
   // Snapshot tags for a submit, read synchronously at submit start from the
   // LIVE candidate set (liveCandidatesRef) via `selectSubmitTags` — so the tags
   // always correspond to the content actually being sent, never a debounced set
   // that still holds a just-removed URL. No await: Send is disabled until every
-  // settling preview has its tag (or the anti-trap cap fires), so at submit time
-  // the tags that will ever exist already exist.
+  // settling preview has its tag or the user suppresses previews, so at submit
+  // time the tags that will ever exist already exist.
   const getReadyTags = React.useCallback(
     () =>
       selectSubmitTags(

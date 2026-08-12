@@ -2,8 +2,8 @@
 // draft containing a supported link is normally still settling (350 ms
 // debounce + metadata/upload) at mount, so a submit fired immediately bails on
 // the pending-snapshot guard. A one-shot `setTimeout(0)` would consume the
-// trigger and silently drop the draft; instead poll until settling finishes
-// (bounded by the preview hook's own anti-trap cap) then submit exactly once.
+// trigger and silently drop the draft; instead poll until settling finishes or
+// the user explicitly suppresses previews, then submit exactly once.
 // The `didSubmit` guard prevents a double fire, and the initial defer lets the
 // draft-persist lifecycle effect load the draft into the editor first.
 //
