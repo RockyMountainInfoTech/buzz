@@ -366,7 +366,9 @@ test("message links to visible root messages open the thread panel", async ({
   const composerLink = composerInput.locator('[data-composer-message-link=""]');
   await expect(composerLink).toHaveText("general · mock-gen");
   await expect(composerLink).toHaveClass(/mention-chip/);
-  await expect(composerLink.locator("svg.mention-chip-icon")).toHaveCount(1);
+  await expect(
+    composerLink.locator("span.composer-message-link-icon"),
+  ).toHaveCount(1);
   await expect(composerLink).toHaveAttribute("data-buzz-link", "");
   await expect(composerLink).toHaveAttribute("title", "Thread in #general");
   await expect(composerInput).not.toContainText("buzz://message");
@@ -422,9 +424,9 @@ test("message links reopen a closed thread when the same messageId is already in
     .last();
   await expect(linkMessage).toBeVisible();
   const rootThreadLink = linkMessage.getByRole("button", {
-    name: "Open thread in general",
+    name: "Open message mock-gen in channel general",
   });
-  await expect(rootThreadLink).toHaveText("#general");
+  await expect(rootThreadLink).toHaveText("general · mock-gen");
   await rootThreadLink.click();
 
   await expect(threadPanel).toBeVisible();
