@@ -116,7 +116,7 @@ async function drainPendingCommunityDeepLinks(deps: DeepLinkDeps) {
  * relay's HTTP API — signed by this app's identity key — and only adds and
  * switches to the community once the relay has admitted the key.
  *
- * `buzz://message?…` is handled separately by `listenForMessageDeepLinks`,
+ * `buzz://message?…` is handled separately by `listenForNavigationDeepLinks`,
  * because it needs to dispatch into the router which only exists below the
  * `RouterProvider` in the component tree.
  */
