@@ -318,6 +318,70 @@ test("community reset stops the stale drain before taking another item", async (
   unlisten();
 });
 
+test("community reset detaches a new drain from a pending stale route", async () => {
+  const oldPending = {
+    id: "old-community",
+    kind: "channel",
+    channelId: "channel-old",
+    messageId: null,
+    threadRootId: null,
+  };
+  const newPending = {
+    id: "new-community",
+    kind: "channel",
+    channelId: "channel-new",
+    messageId: null,
+    threadRootId: null,
+  };
+  const staleRouteGate = deferred();
+  let activePending = oldPending;
+  const opened = [];
+  const acknowledged = [];
+
+  ipcHandlers.set("plugin:event|listen", () => nextCallbackId);
+  ipcHandlers.set("plugin:event|unlisten", () => {});
+  ipcHandlers.set("clear_pending_navigation_deep_links", () => {
+    activePending = newPending;
+  });
+  ipcHandlers.set("take_pending_navigation_deep_link", () => activePending);
+  ipcHandlers.set("acknowledge_pending_navigation_deep_link", ({ id }) => {
+    acknowledged.push(id);
+    if (activePending?.id === id) activePending = null;
+    return true;
+  });
+
+  const oldUnlisten = await listenForNavigationDeepLinks(
+    async (payload) => {
+      opened.push(`old:${payload.channelId}`);
+      await staleRouteGate.promise;
+      return true;
+    },
+    () => true,
+  );
+  await settle();
+  assert.deepEqual(opened, ["old:channel-old"]);
+
+  await resetNavigationDeepLinkDrain(2);
+  oldUnlisten();
+  const newUnlisten = await listenForNavigationDeepLinks(
+    (payload) => {
+      opened.push(`new:${payload.channelId}`);
+      return true;
+    },
+    () => true,
+  );
+  await settle();
+  await settle();
+
+  assert.deepEqual(opened, ["old:channel-old", "new:channel-new"]);
+  assert.deepEqual(acknowledged, ["new-community"]);
+
+  staleRouteGate.resolve();
+  await settle();
+  assert.deepEqual(acknowledged, ["new-community"]);
+  newUnlisten();
+});
+
 test("community reset tolerates native queue clear rejection", async () => {
   const warnings = [];
   const originalWarn = console.warn;

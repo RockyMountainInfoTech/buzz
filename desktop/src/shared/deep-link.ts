@@ -170,6 +170,10 @@ export async function resetNavigationDeepLinkDrain(
   workspaceGeneration: number,
 ): Promise<void> {
   navigationDrainGeneration += 1;
+  // Drains from the previous community may be waiting indefinitely for an old
+  // router transition. Detach the new generation from that serialization tail;
+  // generation checks keep the superseded drain from acknowledging afterward.
+  navigationDrainTail = Promise.resolve();
   try {
     await invoke("clear_pending_navigation_deep_links", {
       workspaceGeneration,
