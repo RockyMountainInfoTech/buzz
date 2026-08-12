@@ -54,7 +54,6 @@ async function resetCommunityState({
   resetAvatarState: boolean;
 }): Promise<void> {
   relayClient.disconnect();
-  await resetNavigationDeepLinkDrain();
   resetRateLimitGate();
   clearAllDrafts();
   resetAgentObserverStore();
@@ -75,6 +74,7 @@ async function resetCommunityState({
   resetBackgroundMediaUploads();
   clearSearchHitEventCache();
   clearMarkdownNodeCache();
+  await resetNavigationDeepLinkDrain();
 }
 
 type CommunityInitResult =
@@ -131,6 +131,7 @@ export function useCommunityInit(
             prevCommunityIdRef.current = null;
           }
           await resetCommunityState({ resetAvatarState: true });
+          if (cancelled) return;
           appliedRelayUrlRef.current = null;
           hasInitializedRef.current = false;
         }
@@ -213,6 +214,10 @@ export function useCommunityInit(
           resetAvatarState:
             appliedRelayUrlRef.current !== activeCommunity.relayUrl,
         });
+        // The native queue clear is asynchronous. A newer community can
+        // supersede this effect while it is pending; never let the stale run
+        // claim shared refs or apply its backend configuration afterward.
+        if (cancelled) return;
       }
       hasInitializedRef.current = true;
       appliedRelayUrlRef.current = activeCommunity.relayUrl;

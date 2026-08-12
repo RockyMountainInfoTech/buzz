@@ -278,6 +278,8 @@ type MockBridgeOptions = {
   canvasReadError?: string;
   /** Delay (ms) for `apply_workspace`; see e2eBridge mock config. */
   applyCommunityDelayMs?: number;
+  /** Delay (ms) for `clear_pending_navigation_deep_links`. */
+  clearPendingNavigationDeepLinksDelayMs?: number;
   openDmDelayMs?: number;
   sendMessageDelayMs?: number;
   /** Hold the media proxy at port 0 until the E2E release seam is invoked. */

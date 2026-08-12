@@ -324,6 +324,9 @@ type E2eConfig = {
     /** Delay (ms) for `apply_workspace` so e2e tests can observe the
      *  community-switch gate. 0/undefined = instant. */
     applyCommunityDelayMs?: number;
+    /** Delay (ms) for `clear_pending_navigation_deep_links` so e2e tests can
+     *  exercise a switch superseded while native queue cleanup is pending. */
+    clearPendingNavigationDeepLinksDelayMs?: number;
     openDmDelayMs?: number;
     sendMessageDelayMs?: number;
     /** Hold the media proxy at port 0 until the E2E release seam is invoked. */
@@ -11933,9 +11936,17 @@ export function maybeInstallE2eTauriMocks() {
         mockPendingCommunityDeepLinks.splice(index, 1);
         return true;
       }
-      case "clear_pending_navigation_deep_links":
+      case "clear_pending_navigation_deep_links": {
+        const clearDelayMs =
+          activeConfig?.mock?.clearPendingNavigationDeepLinksDelayMs ?? 0;
+        if (clearDelayMs > 0) {
+          await new Promise((resolve) =>
+            window.setTimeout(resolve, clearDelayMs),
+          );
+        }
         mockPendingNavigationDeepLinks.length = 0;
         return;
+      }
       case "take_pending_navigation_deep_link":
         return mockPendingNavigationDeepLinks[0] ?? null;
       case "acknowledge_pending_navigation_deep_link": {

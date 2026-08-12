@@ -22,6 +22,12 @@ const COMMUNITY_B = {
   relayUrl: "ws://localhost:3001",
   addedAt: "2026-01-02T00:00:00.000Z",
 };
+const COMMUNITY_C = {
+  id: "ws-c",
+  name: "Charlie",
+  relayUrl: "ws://localhost:3002",
+  addedAt: "2026-01-03T00:00:00.000Z",
+};
 
 async function seedCommunities(
   page: import("@playwright/test").Page,
@@ -844,6 +850,56 @@ test.describe("community rail", () => {
         ),
       )
       .toBe(1);
+  });
+
+  test("does not apply a switch superseded during native queue cleanup", async ({
+    page,
+  }) => {
+    await installMockBridge(
+      page,
+      { clearPendingNavigationDeepLinksDelayMs: 800 },
+      { skipCommunitySeed: true },
+    );
+    await seedCommunities(
+      page,
+      [COMMUNITY_A, COMMUNITY_B, COMMUNITY_C],
+      COMMUNITY_A.id,
+    );
+    await page.goto("/");
+
+    const buttonB = page.getByTestId(`community-rail-button-${COMMUNITY_B.id}`);
+    const buttonC = page.getByTestId(`community-rail-button-${COMMUNITY_C.id}`);
+    await expect(buttonB).toBeVisible();
+    await expect(buttonC).toBeVisible();
+
+    await page.evaluate(
+      ({ buttonBId, buttonCId }) => {
+        const buttonB = document.querySelector<HTMLElement>(
+          `[data-testid="${buttonBId}"]`,
+        );
+        const buttonC = document.querySelector<HTMLElement>(
+          `[data-testid="${buttonCId}"]`,
+        );
+        if (!buttonB || !buttonC) throw new Error("missing community buttons");
+        buttonB.click();
+        buttonC.click();
+      },
+      {
+        buttonBId: `community-rail-button-${COMMUNITY_B.id}`,
+        buttonCId: `community-rail-button-${COMMUNITY_C.id}`,
+      },
+    );
+
+    await expect(buttonC).toHaveAttribute("aria-current", "true");
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window.__BUZZ_E2E_COMMAND_LOG__ ?? [])
+            .filter(({ command }) => command === "apply_workspace")
+            .map(({ payload }) => (payload as { relayUrl?: string }).relayUrl),
+        ),
+      )
+      .toEqual([COMMUNITY_A.relayUrl, COMMUNITY_C.relayUrl]);
   });
 
   test("leaving the final community returns to setup without resetting identity", async ({
