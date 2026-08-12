@@ -451,6 +451,18 @@ fn tts_worker(
     // whenever the player has fully drained — either in the idle timeout
     // arm or on item receipt before synthesis begins.
     let silence_buf_len = (INTER_SENTENCE_SILENCE * SAMPLE_RATE as f32) as usize;
+    // EXPERIMENTAL (latency bench): BUZZ_TTS_STREAMING=1 streams PCM deltas
+    // out of Pocket as they are generated instead of waiting for the full
+    // first-chunk synthesis. BUZZ_TTS_EMIT_FRAMES tunes the delta size in
+    // Flow LM frames (80 ms of audio each). Default 12 = the Mimi decoder's
+    // native chunk, which keeps streamed audio bit-identical to the batch
+    // path; smaller deltas are faster to first audio but diverge (~23 dB SNR
+    // vs batch — decoder intra-chunk lookahead).
+    let tts_streaming = std::env::var("BUZZ_TTS_STREAMING").is_ok_and(|v| v == "1");
+    let stream_emit_frames: usize = std::env::var("BUZZ_TTS_EMIT_FRAMES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(12);
     // `first_append` = "no audio queued since the player last went idle".
     // Flipped by `build_sentence_append_buffer` on the first real append; the
     // idle branch below uses it to decide when to drop `tts_active` and to
@@ -744,6 +756,89 @@ fn tts_worker(
 
             let text = chunk.trim();
             if text.is_empty() {
+                continue;
+            }
+
+            // EXPERIMENTAL (latency bench): streaming synthesis path. PCM
+            // deltas are appended to the player as they are generated, so
+            // first audio lands after ~stream_emit_frames of generation
+            // instead of after the whole first-chunk synthesis. Delta
+            // boundary decoration reuses PlaybackChunkAudio: lead-in on the
+            // first delta, fade-out only on the final one.
+            if tts_streaming {
+                let mut playback_audio = PlaybackChunkAudio::new();
+                let mut delta_index = 0usize;
+                let stream_result = engine.synth_chunk_streaming(
+                    text,
+                    &style,
+                    stream_emit_frames,
+                    &mut |samples| {
+                        if cancel.load(Ordering::Acquire)
+                            || voice_cancel.load(Ordering::Acquire)
+                            || shutdown.load(Ordering::Acquire)
+                        {
+                            return false;
+                        }
+                        let chunk_index = delta_index;
+                        delta_index += 1;
+                        if let Some(prepared) = playback_audio.push(
+                            samples,
+                            chunk_index,
+                            &mut first_append,
+                            silence_buf_len,
+                            player.empty(),
+                        ) {
+                            if !append_audio(
+                                prepared,
+                                route_id,
+                                speaker_pubkey.as_deref(),
+                                speaker_generation,
+                            ) {
+                                return false;
+                            }
+                            appended_audio = true;
+                            last_route_id = route_id;
+                        }
+                        true
+                    },
+                );
+                match stream_result {
+                    Ok(true) => {
+                        if let Some(prepared) = playback_audio.finish(
+                            &mut first_append,
+                            silence_buf_len,
+                            player.empty(),
+                        ) {
+                            if !append_audio(
+                                prepared,
+                                route_id,
+                                speaker_pubkey.as_deref(),
+                                speaker_generation,
+                            ) {
+                                first_append = true;
+                                synthesis_outcome = "cancelled";
+                                break 'playback_chunks;
+                            }
+                            appended_audio = true;
+                            last_route_id = route_id;
+                        }
+                    }
+                    Ok(false) => {
+                        eprintln!(
+                            "buzz-desktop: tts stage=synthesis status=cancelled reason=stream_callback route_id={route_id}"
+                        );
+                        first_append = true;
+                        synthesis_outcome = "cancelled";
+                        break 'playback_chunks;
+                    }
+                    Err(_) => {
+                        eprintln!(
+                            "buzz-desktop: tts stage=synthesis status=failed reason=inference route_id={route_id}"
+                        );
+                        synthesis_outcome = "failed";
+                        break 'playback_chunks;
+                    }
+                }
                 continue;
             }
 

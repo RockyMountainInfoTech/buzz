@@ -168,6 +168,17 @@ impl Drop for SttPipeline {
 /// Previous value (28 frames / 450 ms) felt sluggish in conversation.
 const SILENCE_FLUSH_FRAMES: usize = 19;
 
+/// EXPERIMENTAL (latency bench): override the silence flush window in ms via
+/// `BUZZ_STT_FLUSH_MS`. Default preserves the production 300 ms window.
+/// One VAD frame = 256 samples at 16 kHz = 16 ms.
+fn silence_flush_frames() -> usize {
+    std::env::var("BUZZ_STT_FLUSH_MS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map(|ms| (ms / 16).max(1))
+        .unwrap_or(SILENCE_FLUSH_FRAMES)
+}
+
 /// earshot requires exactly 256 samples per frame at 16 kHz.
 const VAD_FRAME_SAMPLES: usize = 256;
 
@@ -199,6 +210,26 @@ const TTS_COOLDOWN: Duration = Duration::from_millis(150);
 /// worklet on small Macs (4-core Intel especially). Bump to 2 once the A/B
 /// shows it's safe on the minimum-spec target.
 const STT_NUM_THREADS: i32 = 1;
+
+/// EXPERIMENTAL (latency bench): override recognizer intra-op threads via
+/// `BUZZ_STT_THREADS`. Default preserves the production single thread.
+fn stt_num_threads() -> i32 {
+    std::env::var("BUZZ_STT_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<i32>().ok())
+        .filter(|&n| n >= 1)
+        .unwrap_or(STT_NUM_THREADS)
+}
+
+/// EXPERIMENTAL (latency bench): `BUZZ_STT_SPECULATIVE=1` starts the Parakeet
+/// decode at the FIRST silent VAD frame instead of after the full flush
+/// window, overlapping the ~150-250 ms decode with the silence wait. If
+/// speech resumes, the speculative result is discarded. When silence holds
+/// to the flush threshold the transcript is emitted immediately, so the STT
+/// leg collapses to ~max(flush window, decode time).
+fn stt_speculative_decode() -> bool {
+    std::env::var("BUZZ_STT_SPECULATIVE").is_ok_and(|v| v == "1")
+}
 
 fn stt_worker(
     model_dir: PathBuf,
@@ -248,7 +279,7 @@ fn stt_worker(
     let mut cfg = OfflineRecognizerConfig::default();
     cfg.model_config.nemo_ctc.model = Some(model_path.to_string_lossy().into_owned());
     cfg.model_config.tokens = Some(tokens_path.to_string_lossy().into_owned());
-    cfg.model_config.num_threads = STT_NUM_THREADS;
+    cfg.model_config.num_threads = stt_num_threads();
     // Explicit — defaults are not part of the API contract, and noisy debug
     // logging in release builds would be expensive on every VAD chunk.
     cfg.model_config.debug = false;
@@ -277,6 +308,12 @@ fn stt_worker(
     let mut voiced_frames = 0;
     // Timestamp when TTS last stopped — used for the playback-tail cooldown.
     let mut tts_stopped_at: Option<std::time::Instant> = None;
+    // Resolved once: silence flush window (frames), env-overridable for the bench.
+    let flush_frames = silence_flush_frames();
+    // EXPERIMENTAL: speculative decode result + the voiced-frame count it was
+    // computed at. Valid only while no new voiced frame has arrived since.
+    let speculative_enabled = stt_speculative_decode();
+    let mut speculative: Option<(String, usize)> = None;
 
     // ── 5. Main loop ──────────────────────────────────────────────────────────
     let mut tts_was_active = false;
@@ -348,6 +385,8 @@ fn stt_worker(
                     &mut silence_frames,
                     &mut in_speech,
                     &mut voiced_frames,
+                    flush_frames,
+                    (speculative_enabled, &mut speculative),
                     &recognizer,
                     &text_tx,
                     &tts_active,
@@ -408,6 +447,8 @@ fn process_16k_samples(
     silence_frames: &mut usize,
     in_speech: &mut bool,
     voiced_frames: &mut usize,
+    flush_frames: usize,
+    speculative: (bool, &mut Option<(String, usize)>),
     recognizer: &sherpa_onnx::OfflineRecognizer,
     text_tx: &tokio_mpsc::Sender<String>,
     tts_active: &Arc<AtomicBool>,
@@ -415,6 +456,7 @@ fn process_16k_samples(
     ptt_active: Option<&Arc<AtomicBool>>,
     manual_mic_unmuted: Option<&Arc<AtomicBool>>,
 ) {
+    let (speculative_enabled, speculative) = speculative;
     leftover.extend_from_slice(samples);
 
     while leftover.len() >= VAD_FRAME_SAMPLES {
@@ -472,6 +514,8 @@ fn process_16k_samples(
             *in_speech = true;
             *voiced_frames += 1;
             speech_buf.extend_from_slice(&frame);
+            // New voiced audio invalidates any speculative decode.
+            speculative.take();
 
             // OOM guard: flush and reset if the buffer exceeds 30 s of audio.
             if speech_buf.len() >= MAX_SPEECH_SAMPLES {
@@ -486,11 +530,29 @@ fn process_16k_samples(
             speech_buf.extend_from_slice(&frame);
             *silence_frames += 1;
 
+            // EXPERIMENTAL: kick the Parakeet decode at the first silent
+            // frame so it overlaps the flush window. speech_buf keeps
+            // accumulating silence afterwards, but trailing silence does not
+            // change the transcript; any resumed speech invalidates the
+            // speculative result above.
+            if speculative_enabled
+                && speculative.is_none()
+                && (ptt_active.is_none() || manually_open)
+                && has_enough_voiced_audio(*voiced_frames)
+            {
+                speculative.replace((decode_speech(recognizer, speech_buf), *voiced_frames));
+            }
+
             // A manually open microphone behaves like normal VAD. A
             // shortcut-only transmission stays grouped until key release.
-            if (ptt_active.is_none() || manually_open) && *silence_frames >= SILENCE_FLUSH_FRAMES {
-                // End of utterance — transcribe.
-                flush_to_stt(speech_buf, *voiced_frames, recognizer, text_tx);
+            if (ptt_active.is_none() || manually_open) && *silence_frames >= flush_frames {
+                // End of utterance — transcribe (or emit the speculative decode).
+                match speculative.take() {
+                    Some((text, decoded_at)) if decoded_at == *voiced_frames => {
+                        send_transcript(text, text_tx);
+                    }
+                    _ => flush_to_stt(speech_buf, *voiced_frames, recognizer, text_tx),
+                }
                 speech_buf.clear();
                 *silence_frames = 0;
                 *in_speech = false;
@@ -514,16 +576,22 @@ fn flush_to_stt(
     if speech_buf.is_empty() || !has_enough_voiced_audio(voiced_frames) {
         return;
     }
+    send_transcript(decode_speech(recognizer, speech_buf), text_tx);
+}
 
+/// Run the Parakeet decode on a speech buffer and return the trimmed text.
+fn decode_speech(recognizer: &sherpa_onnx::OfflineRecognizer, speech_buf: &[f32]) -> String {
     let stream = recognizer.create_stream();
     stream.accept_waveform(16_000, speech_buf);
     recognizer.decode(&stream);
 
-    let text = stream
+    stream
         .get_result()
         .map(|r| r.text.trim().to_string())
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
 
+fn send_transcript(text: String, text_tx: &tokio_mpsc::Sender<String>) {
     if !text.is_empty() {
         if let Err(e) = text_tx.blocking_send(text) {
             eprintln!("buzz-desktop: STT text channel closed: {e}");

@@ -29,6 +29,8 @@ pub mod agents;
 pub mod audio_output;
 mod commands;
 pub mod jitter;
+#[cfg(test)]
+mod latency_bench;
 pub mod models;
 pub mod pipeline;
 pub mod playout;

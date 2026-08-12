@@ -96,6 +96,101 @@ struct CachedVoice {
     embeddings: Vec<f32>,
 }
 
+/// EXPERIMENTAL (latency): a dtype-tagged copy of one recurrent state tensor,
+/// used to snapshot the Flow LM state right after voice conditioning so
+/// subsequent chunks skip the ~160 ms `condition_voice` pass entirely.
+enum SnapshotTensor {
+    F32(Vec<i64>, Vec<f32>),
+    I64(Vec<i64>, Vec<i64>),
+    Bool(Vec<i64>, Vec<bool>),
+}
+
+struct CachedConditioning {
+    samples_ptr: usize,
+    samples_len: usize,
+    sample_rate: i32,
+    state: Vec<(StateSpec, SnapshotTensor)>,
+}
+
+fn snapshot_state(state: &[StateValue]) -> Result<Vec<(StateSpec, SnapshotTensor)>, String> {
+    state
+        .iter()
+        .map(|value| {
+            let tensor = match value.spec.dtype {
+                StateDtype::Float32 => {
+                    let (shape, data) = value
+                        .value
+                        .try_extract_tensor::<f32>()
+                        .map_err(ort_error("snapshot f32 state"))?;
+                    SnapshotTensor::F32(shape.to_vec(), data.to_vec())
+                }
+                StateDtype::Int64 => {
+                    let (shape, data) = value
+                        .value
+                        .try_extract_tensor::<i64>()
+                        .map_err(ort_error("snapshot i64 state"))?;
+                    SnapshotTensor::I64(shape.to_vec(), data.to_vec())
+                }
+                StateDtype::Bool => {
+                    let (shape, data) = value
+                        .value
+                        .try_extract_tensor::<bool>()
+                        .map_err(ort_error("snapshot bool state"))?;
+                    SnapshotTensor::Bool(shape.to_vec(), data.to_vec())
+                }
+            };
+            Ok((value.spec.clone(), tensor))
+        })
+        .collect()
+}
+
+fn restore_state(snapshot: &[(StateSpec, SnapshotTensor)]) -> Result<Vec<StateValue>, String> {
+    snapshot
+        .iter()
+        .map(|(spec, tensor)| {
+            let value = match tensor {
+                SnapshotTensor::F32(shape, data) => {
+                    if data.is_empty() {
+                        Tensor::<f32>::new(&ort::memory::Allocator::default(), shape.clone())
+                            .map_err(ort_error("restore empty f32 state"))?
+                            .into_dyn()
+                    } else {
+                        Tensor::from_array((shape.clone(), data.clone().into_boxed_slice()))
+                            .map_err(ort_error("restore f32 state"))?
+                            .into_dyn()
+                    }
+                }
+                SnapshotTensor::I64(shape, data) => {
+                    if data.is_empty() {
+                        Tensor::<i64>::new(&ort::memory::Allocator::default(), shape.clone())
+                            .map_err(ort_error("restore empty i64 state"))?
+                            .into_dyn()
+                    } else {
+                        Tensor::from_array((shape.clone(), data.clone().into_boxed_slice()))
+                            .map_err(ort_error("restore i64 state"))?
+                            .into_dyn()
+                    }
+                }
+                SnapshotTensor::Bool(shape, data) => {
+                    if data.is_empty() {
+                        Tensor::<bool>::new(&ort::memory::Allocator::default(), shape.clone())
+                            .map_err(ort_error("restore empty bool state"))?
+                            .into_dyn()
+                    } else {
+                        Tensor::from_array((shape.clone(), data.clone().into_boxed_slice()))
+                            .map_err(ort_error("restore bool state"))?
+                            .into_dyn()
+                    }
+                }
+            };
+            Ok(StateValue {
+                spec: spec.clone(),
+                value,
+            })
+        })
+        .collect()
+}
+
 pub(crate) struct AprilPocketTts {
     bundle: Bundle,
     tokenizer: Tokenizer,
@@ -106,6 +201,10 @@ pub(crate) struct AprilPocketTts {
     flow: Session,
     mimi_decoder: Session,
     cached_voice: Option<CachedVoice>,
+    /// EXPERIMENTAL (latency): post-`condition_voice` Flow LM state, cached
+    /// per reference voice. Restoring it replaces the ~160 ms conditioning
+    /// pass on every chunk after the first for a given voice.
+    cached_conditioning: Option<CachedConditioning>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -239,6 +338,7 @@ impl AprilPocketTts {
             tokenizer,
             bos_embedding,
             cached_voice: None,
+            cached_conditioning: None,
         })
     }
 
@@ -309,8 +409,11 @@ impl AprilPocketTts {
         prepared: &AprilPreparedPrompt,
         style: &VoiceStyle,
     ) -> Result<Vec<f32>, String> {
-        let voice_embeddings = self.voice_embeddings(style)?;
-        let mut flow_state = self.condition_voice(&voice_embeddings)?;
+        // EXPERIMENTAL (latency bench): phase timing, enabled by BUZZ_TTS_PHASE_LOG=1.
+        let phase_log = std::env::var("BUZZ_TTS_PHASE_LOG").is_ok_and(|v| v == "1");
+        let t0 = std::time::Instant::now();
+        let mut flow_state = self.conditioned_flow_state(style)?;
+        let t_condition = t0.elapsed();
         let token_ids = self
             .tokenizer
             .encode(prepared.text.as_str(), false)
@@ -334,10 +437,249 @@ impl AprilPocketTts {
         let token_count = token_ids.len();
         let text_embeddings = self.text_embeddings(token_ids)?;
         self.run_flow_main_prefix(&text_embeddings, &mut flow_state)?;
+        let t_prefix = t0.elapsed();
         let max_frames = estimate_max_frames(token_count, self.bundle.frame_rate);
         let latents =
             self.generate_latents(max_frames, prepared.frames_after_eos, &mut flow_state)?;
-        self.decode_latents(&latents)
+        let t_generate = t0.elapsed();
+        let audio = self.decode_latents(&latents)?;
+        if phase_log {
+            eprintln!(
+                "tts-phase: condition={:.0}ms prefix={:.0}ms generate={:.0}ms decode={:.0}ms frames={} audio_s={:.2}",
+                t_condition.as_secs_f64() * 1e3,
+                (t_prefix - t_condition).as_secs_f64() * 1e3,
+                (t_generate - t_prefix).as_secs_f64() * 1e3,
+                (t0.elapsed() - t_generate).as_secs_f64() * 1e3,
+                latents.len() / self.bundle.latent_dim,
+                audio.len() as f64 / self.bundle.sample_rate as f64,
+            );
+        }
+        Ok(audio)
+    }
+
+    /// EXPERIMENTAL (latency): return a fresh Flow LM state conditioned on
+    /// the reference voice, restoring a cached snapshot when the same voice
+    /// samples were conditioned before. Keyed identically to `cached_voice`.
+    fn conditioned_flow_state(&mut self, style: &VoiceStyle) -> Result<Vec<StateValue>, String> {
+        let key = (
+            style.samples.as_ptr() as usize,
+            style.samples.len(),
+            style.sample_rate,
+        );
+        if let Some(cached) = &self.cached_conditioning {
+            if (cached.samples_ptr, cached.samples_len, cached.sample_rate) == key {
+                return restore_state(&cached.state);
+            }
+        }
+        let voice_embeddings = self.voice_embeddings(style)?;
+        let state = self.condition_voice(&voice_embeddings)?;
+        self.cached_conditioning = Some(CachedConditioning {
+            samples_ptr: key.0,
+            samples_len: key.1,
+            sample_rate: key.2,
+            state: snapshot_state(&state)?,
+        });
+        Ok(state)
+    }
+
+    /// EXPERIMENTAL (latency): streaming synthesis — interleaves the Flow LM
+    /// frame loop with incremental stateful Mimi decoding, invoking
+    /// `on_audio` with each decoded delta as soon as ~`emit_frames` latent
+    /// frames exist (80 ms of audio per frame). The Mimi decoder carries its
+    /// recurrent state across deltas, so the concatenated deltas are the same
+    /// audio `synth_chunk` would return. Returns Ok(false) when the callback
+    /// requested cancellation.
+    pub(crate) fn synth_chunk_streaming(
+        &mut self,
+        prepared: &AprilPreparedPrompt,
+        style: &VoiceStyle,
+        emit_frames: usize,
+        on_audio: &mut dyn FnMut(Vec<f32>) -> bool,
+    ) -> Result<bool, String> {
+        let mut flow_state = self.conditioned_flow_state(style)?;
+        let token_ids = self
+            .tokenizer
+            .encode(prepared.text.as_str(), false)
+            .map_err(|err| format!("tokenize Pocket TTS prompt: {err}"))?
+            .get_ids()
+            .iter()
+            .copied()
+            .map(i64::from)
+            .collect::<Vec<_>>();
+        if token_ids.is_empty() {
+            return Ok(true);
+        }
+        if token_ids.len() > self.bundle.max_token_per_chunk {
+            return Err(format!(
+                "Pocket TTS prompt has {} tokens; split_text_into_chunks maximum is {}",
+                token_ids.len(),
+                self.bundle.max_token_per_chunk
+            ));
+        }
+
+        let token_count = token_ids.len();
+        let text_embeddings = self.text_embeddings(token_ids)?;
+        self.run_flow_main_prefix(&text_embeddings, &mut flow_state)?;
+        let max_frames = estimate_max_frames(token_count, self.bundle.frame_rate);
+        let emit_frames = emit_frames.max(1);
+
+        let mut mimi_state = initialize_state(&self.bundle.mimi_state_manifest)?;
+        let mut pending: Vec<f32> = Vec::with_capacity(emit_frames * self.bundle.latent_dim);
+        let mut current = vec![f32::NAN; self.bundle.latent_dim];
+        let mut eos_step = None;
+        let mut rng = rand::rng();
+
+        for step in 0..max_frames {
+            let sequence = Tensor::from_array((
+                vec![1_i64, 1, self.bundle.latent_dim as i64],
+                current.clone().into_boxed_slice(),
+            ))
+            .map_err(ort_error("create latent input"))?;
+            let text_embeddings = Tensor::<f32>::new(
+                &ort::memory::Allocator::default(),
+                [1_i64, 0, self.bundle.conditioning_dim as i64],
+            )
+            .map_err(ort_error("create empty text input"))?;
+            let mut inputs = vec![
+                (Cow::Borrowed("sequence"), SessionInputValue::from(sequence)),
+                (
+                    Cow::Borrowed("text_embeddings"),
+                    SessionInputValue::from(text_embeddings),
+                ),
+            ];
+            append_state_inputs(&mut inputs, &flow_state);
+            // Scoped: `outputs` borrows `self.flow_main`; it must drop before
+            // `decode_frames` takes `&mut self` below.
+            let (conditioning, eos_logit) = {
+                let mut outputs = self
+                    .flow_main
+                    .run(inputs)
+                    .map_err(ort_error("run Pocket TTS Flow LM"))?;
+                let conditioning = outputs[0]
+                    .try_extract_tensor::<f32>()
+                    .map_err(ort_error("extract Flow LM conditioning"))?
+                    .1
+                    .to_vec();
+                let eos_logit = outputs[1]
+                    .try_extract_tensor::<f32>()
+                    .map_err(ort_error("extract Flow LM EOS logit"))?
+                    .1
+                    .first()
+                    .copied()
+                    .ok_or_else(|| "Flow LM returned empty EOS logit".to_string())?;
+                replace_state_from_outputs(&mut flow_state, &mut outputs)?;
+                (conditioning, eos_logit)
+            };
+
+            if eos_logit > EOS_LOGIT_THRESHOLD && eos_step.is_none() {
+                eos_step = Some(step);
+            }
+            if eos_step.is_some_and(|eos| step >= eos + prepared.frames_after_eos) {
+                break;
+            }
+
+            let mut noise =
+                normal_noise(&mut rng, self.bundle.latent_dim, DEFAULT_TEMPERATURE.sqrt());
+            let conditioning = Tensor::from_array((
+                vec![1_i64, self.bundle.conditioning_dim as i64],
+                conditioning.into_boxed_slice(),
+            ))
+            .map_err(ort_error("create flow conditioning"))?;
+            let s = Tensor::from_array((vec![1_i64, 1], vec![0.0_f32].into_boxed_slice()))
+                .map_err(ort_error("create flow start tensor"))?;
+            let t = Tensor::from_array((vec![1_i64, 1], vec![1.0_f32].into_boxed_slice()))
+                .map_err(ort_error("create flow end tensor"))?;
+            let x = Tensor::from_array((
+                vec![1_i64, self.bundle.latent_dim as i64],
+                noise.clone().into_boxed_slice(),
+            ))
+            .map_err(ort_error("create flow noise tensor"))?;
+            let outputs = self
+                .flow
+                .run(ort::inputs![
+                    "c" => conditioning,
+                    "s" => s,
+                    "t" => t,
+                    "x" => x,
+                ])
+                .map_err(ort_error("run Pocket TTS flow"))?;
+            let flow = outputs[0]
+                .try_extract_tensor::<f32>()
+                .map_err(ort_error("extract Pocket TTS flow"))?
+                .1;
+            if flow.len() != noise.len() {
+                return Err(format!(
+                    "flow returned {} values; expected {}",
+                    flow.len(),
+                    noise.len()
+                ));
+            }
+            for (sample, delta) in noise.iter_mut().zip(flow) {
+                *sample += *delta;
+            }
+            drop(outputs);
+            current.clone_from(&noise);
+            pending.extend_from_slice(&noise);
+
+            if pending.len() >= emit_frames * self.bundle.latent_dim {
+                let audio = self.decode_frames(&pending, &mut mimi_state)?;
+                pending.clear();
+                if !audio.is_empty() && !on_audio(audio) {
+                    return Ok(false);
+                }
+            }
+        }
+        if !pending.is_empty() {
+            let audio = self.decode_frames(&pending, &mut mimi_state)?;
+            if !audio.is_empty() && !on_audio(audio) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// EXPERIMENTAL (latency): decode a batch of latent frames with a
+    /// caller-held Mimi state, so successive calls continue one stream.
+    fn decode_frames(
+        &mut self,
+        latents: &[f32],
+        state: &mut [StateValue],
+    ) -> Result<Vec<f32>, String> {
+        if latents.is_empty() {
+            return Ok(Vec::new());
+        }
+        if !latents.len().is_multiple_of(self.bundle.latent_dim) {
+            return Err(format!(
+                "latent buffer has {} values, not divisible by {}",
+                latents.len(),
+                self.bundle.latent_dim
+            ));
+        }
+        let frame_count = latents.len() / self.bundle.latent_dim;
+        let mut audio = Vec::new();
+        for start in (0..frame_count).step_by(DECODER_CHUNK_FRAMES) {
+            let end = (start + DECODER_CHUNK_FRAMES).min(frame_count);
+            let values =
+                latents[start * self.bundle.latent_dim..end * self.bundle.latent_dim].to_vec();
+            let latent = Tensor::from_array((
+                vec![1_i64, (end - start) as i64, self.bundle.latent_dim as i64],
+                values.into_boxed_slice(),
+            ))
+            .map_err(ort_error("create Mimi latent tensor"))?;
+            let mut inputs = vec![(Cow::Borrowed("latent"), SessionInputValue::from(latent))];
+            append_state_inputs(&mut inputs, state);
+            let mut outputs = self
+                .mimi_decoder
+                .run(inputs)
+                .map_err(ort_error("run Mimi decoder"))?;
+            let samples = outputs[0]
+                .try_extract_tensor::<f32>()
+                .map_err(ort_error("extract Mimi audio"))?
+                .1;
+            audio.extend_from_slice(samples);
+            replace_state_from_outputs(state, &mut outputs)?;
+        }
+        Ok(audio)
     }
 
     fn prepared_token_count(&self, text: &str) -> Result<usize, String> {
@@ -872,6 +1214,107 @@ mod tests {
     fn generation_frame_estimate_scales_with_token_count() {
         assert_eq!(estimate_max_frames(3, 12.5), 38);
         assert_eq!(estimate_max_frames(300, 12.5), 1_275);
+    }
+
+    #[test]
+    #[ignore = "requires BUZZ_POCKET_TEST_MODEL_DIR"]
+    fn incremental_stateful_decode_matches_batch_decode() {
+        let dir = std::env::var("BUZZ_POCKET_TEST_MODEL_DIR")
+            .expect("set BUZZ_POCKET_TEST_MODEL_DIR to the verified April bundle");
+        let mut engine = AprilPocketTts::load(Path::new(&dir), 1).expect("load April bundle");
+        let style = crate::pocket::load_voice_style(&Path::new(&dir).join("reference_sample.wav"))
+            .expect("load reference voice");
+
+        // Generate one real latent sequence (the RNG makes repeat synths
+        // differ, so both decode paths must consume the SAME latents).
+        let prepared =
+            prepare_april_prompt("The relay deploy finished and every check passed cleanly.")
+                .expect("prepare prompt");
+        let mut flow_state = engine
+            .conditioned_flow_state(&style)
+            .expect("condition voice");
+        let token_ids = engine
+            .tokenizer
+            .encode(prepared.text.as_str(), false)
+            .expect("tokenize")
+            .get_ids()
+            .iter()
+            .copied()
+            .map(i64::from)
+            .collect::<Vec<_>>();
+        let token_count = token_ids.len();
+        let text_embeddings = engine.text_embeddings(token_ids).expect("text embeddings");
+        engine
+            .run_flow_main_prefix(&text_embeddings, &mut flow_state)
+            .expect("prefix");
+        let max_frames = estimate_max_frames(token_count, engine.bundle.frame_rate);
+        let latents = engine
+            .generate_latents(max_frames, prepared.frames_after_eos, &mut flow_state)
+            .expect("generate latents");
+        let frame_count = latents.len() / engine.bundle.latent_dim;
+        assert!(
+            frame_count > DECODER_CHUNK_FRAMES,
+            "need a multi-chunk case"
+        );
+
+        // Batch: the production decode (fresh state, 12-frame steps).
+        let batch = engine.decode_latents(&latents).expect("batch decode");
+
+        // Incremental chunkings: 12-frame deltas through one carried Mimi
+        // state must be bit-exact (the production batch path itself steps by
+        // DECODER_CHUNK_FRAMES=12 through one state). Sub-12 chunkings are
+        // measured for the record but are NOT exact — the decoder has
+        // intra-chunk lookahead — so streaming must emit at >= 12 frames.
+        for delta_frames in [6usize, 4, 2, 1] {
+            let mut state =
+                initialize_state(&engine.bundle.mimi_state_manifest).expect("mimi state");
+            let mut streamed = Vec::new();
+            for chunk in latents.chunks(delta_frames * engine.bundle.latent_dim) {
+                streamed.extend(
+                    engine
+                        .decode_frames(chunk, &mut state)
+                        .expect("delta decode"),
+                );
+            }
+            assert_eq!(batch.len(), streamed.len(), "sample count must match");
+            let max_diff = batch
+                .iter()
+                .zip(&streamed)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            let rms_batch = (batch.iter().map(|s| s * s).sum::<f32>() / batch.len() as f32).sqrt();
+            let rms_err = (batch
+                .iter()
+                .zip(&streamed)
+                .map(|(a, b)| (a - b) * (a - b))
+                .sum::<f32>()
+                / batch.len() as f32)
+                .sqrt();
+            eprintln!(
+                "delta_frames={delta_frames}: max|diff|={max_diff:.6} rms_err={rms_err:.6} snr_db={:.1}",
+                20.0 * (rms_batch / rms_err.max(1e-12)).log10()
+            );
+        }
+        let mut state = initialize_state(&engine.bundle.mimi_state_manifest).expect("mimi state");
+        let mut streamed = Vec::new();
+        for chunk in latents.chunks(DECODER_CHUNK_FRAMES * engine.bundle.latent_dim) {
+            streamed.extend(
+                engine
+                    .decode_frames(chunk, &mut state)
+                    .expect("delta decode"),
+            );
+        }
+
+        assert_eq!(batch.len(), streamed.len(), "sample count must match");
+        let max_diff = batch
+            .iter()
+            .zip(&streamed)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_diff <= 1.0e-4,
+            "incremental decode diverged from batch decode: max |diff| = {max_diff}"
+        );
     }
 
     #[test]

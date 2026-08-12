@@ -40,6 +40,16 @@ pub const VOICE_FILE_EXT: &str = "wav";
 
 const TTS_NUM_THREADS: usize = 1;
 
+/// EXPERIMENTAL (latency): override ONNX intra-op threads for the Pocket
+/// sessions via `BUZZ_TTS_THREADS`. Default preserves production's 1.
+fn tts_num_threads() -> usize {
+    std::env::var("BUZZ_TTS_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n >= 1)
+        .unwrap_or(TTS_NUM_THREADS)
+}
+
 /// Loaded reference voice samples and their original sample rate.
 #[derive(Debug, Clone)]
 pub struct VoiceStyle {
@@ -83,7 +93,7 @@ pub fn load_text_to_speech(model_dir: &str) -> Result<PocketTts, String> {
         }
     }
     Ok(PocketTts {
-        inner: Mutex::new(AprilPocketTts::load(&dir, TTS_NUM_THREADS)?),
+        inner: Mutex::new(AprilPocketTts::load(&dir, tts_num_threads())?),
     })
 }
 
@@ -126,6 +136,36 @@ impl PocketTts {
             samples.extend(engine.synth_chunk(&prepared, style)?);
         }
         Ok(samples)
+    }
+
+    /// EXPERIMENTAL (latency): streaming synthesis. Invokes `on_audio` with
+    /// PCM deltas as soon as roughly `emit_frames` Flow LM frames (80 ms of
+    /// audio each) have been generated and decoded. Concatenated deltas equal
+    /// one `synth_chunk` result. The callback runs on the caller thread and
+    /// returns `false` to cancel; the function then returns Ok(false).
+    pub fn synth_chunk_streaming(
+        &self,
+        text: &str,
+        style: &VoiceStyle,
+        emit_frames: usize,
+        on_audio: &mut dyn FnMut(Vec<f32>) -> bool,
+    ) -> Result<bool, String> {
+        let Some(prepared) = prepare_april_prompt(text) else {
+            return Ok(true);
+        };
+        let mut engine = self
+            .inner
+            .lock()
+            .map_err(|_| "Pocket TTS engine lock poisoned".to_string())?;
+        let chunks = engine.split_prompt(&prepared)?;
+        for chunk in chunks {
+            let prepared = prepare_april_prompt(&chunk)
+                .ok_or_else(|| "Pocket TTS prompt chunk became empty".to_string())?;
+            if !engine.synth_chunk_streaming(&prepared, style, emit_frames, on_audio)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
 
