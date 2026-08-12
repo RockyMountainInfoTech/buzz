@@ -8,6 +8,7 @@ import {
 import { resolveAgentCardModelLabel } from "@/features/agents/lib/agentCardModelLabel";
 import { friendlyAgentLastError } from "@/features/agents/lib/friendlyAgentLastError";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
+import { useIsArchivedPredicate } from "@/features/identity-archive/hooks";
 import { useUserProfileQuery } from "@/features/profile/hooks";
 import type { AgentPersona, ManagedAgent } from "@/shared/api/types";
 import type { ProfilePanelOpenOptions } from "@/shared/context/ProfilePanelContext";
@@ -93,9 +94,10 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
     onDeletePersona,
   } = props;
 
+  const isArchived = useIsArchivedPredicate();
   const { groups, ungrouped, unknown } = React.useMemo(
-    () => buildUnifiedGroups(personas, agents),
-    [personas, agents],
+    () => buildUnifiedGroups(personas, agents, isArchived),
+    [personas, agents, isArchived],
   );
   const [collapsed, setCollapsed] = React.useState<Set<string>>(new Set());
   function toggle(key: string) {
@@ -128,7 +130,7 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
               onClick={onOpenCatalog}
             />
             {groups.map((group) => {
-              const profileAgent = pickProfileAgent(group.agents);
+              const profileAgent = pickProfileAgent(group.agents, isArchived);
               return (
                 <AgentPersonaCard
                   actions={(effectiveAvatarUrl, isEffectiveAvatarLoading) => (

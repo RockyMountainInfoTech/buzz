@@ -228,16 +228,18 @@ test("resolveProfileManagedAgent_persona_fallback_skips_archived_and_lands_on_li
   );
 });
 
-test("resolveProfileManagedAgent_persona_fallback_returns_first_when_all_archived", () => {
+test("resolveProfileManagedAgent_persona_all_archived_returns_undefined", () => {
   const first = agent({ pubkey: archivedPk });
   const second = agent({ pubkey: livePk });
+  // Every sibling archived: never surface an archived record as primary; the
+  // panel renders from the persona prop instead.
   assert.equal(
     resolveProfileManagedAgent(
       [first, second],
       { persona: { id: "persona-1" } },
       isArchivedIn(archivedPk, livePk),
     ),
-    first,
+    undefined,
   );
 });
 
@@ -269,16 +271,18 @@ test("resolvePersonaInstances_filters_archived_siblings", () => {
   );
 });
 
-test("resolvePersonaInstances_all_archived_falls_back_to_full_sibling_set", () => {
+test("resolvePersonaInstances_all_archived_returns_empty_list", () => {
   const first = agent({ pubkey: archivedPk });
   const second = agent({ pubkey: livePk });
+  // Every sibling archived: the Instances section self-omits on an empty array,
+  // so archived identities never surface here.
   assert.deepEqual(
     resolvePersonaInstances(
       first,
       [first, second],
       isArchivedIn(archivedPk, livePk),
     ),
-    [first, second],
+    [],
   );
 });
 

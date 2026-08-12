@@ -161,9 +161,10 @@ export function getRelayAgentChannelIds(
  * Resolve the "primary" managed agent a profile click lands on.
  *
  * An explicit `pubkey` always wins verbatim — clicking an archived identity's
- * pubkey means you want that exact record. The persona fallback instead prefers
- * a live sibling so an archived record early in file order can't hijack the nav
- * click; it only returns an archived record when every sibling is archived.
+ * pubkey (e.g. a specific instance row) means you want that exact record, which
+ * keeps the manage/unarchive flow reachable. Persona resolution never surfaces
+ * an archived record: it returns only a non-archived match, or `undefined` when
+ * every sibling is archived (the panel still renders from the `persona` prop).
  *
  * `isArchived` is fail-open (false while the relay snapshot loads), so a cold
  * start resolves exactly as it did before this filter existed.
@@ -178,16 +179,18 @@ export function resolveProfileManagedAgent(
     return agents.find((agent) => agent.pubkey.toLowerCase() === pubkeyLower);
   }
   if (persona) {
-    const matches = agents.filter((agent) => agent.personaId === persona.id);
-    return matches.find((agent) => !isArchived(agent.pubkey)) ?? matches[0];
+    return agents.find(
+      (agent) => agent.personaId === persona.id && !isArchived(agent.pubkey),
+    );
   }
   return undefined;
 }
 
 /**
- * Instances shown for a persona, with relay-archived siblings hidden. Falls
- * back to the full sibling set when every instance is archived so the persona
- * is never stranded with an empty list.
+ * Instances shown for a persona, with relay-archived siblings hidden. Always
+ * returns the filtered live list, including `[]` when every instance is
+ * archived — the Instances section self-omits on an empty array, so archived
+ * identities never surface here.
  */
 export function resolvePersonaInstances(
   managedAgent: ManagedAgent | undefined,
@@ -195,11 +198,10 @@ export function resolvePersonaInstances(
   isArchived: (pubkey: string) => boolean,
 ): ManagedAgent[] {
   if (!managedAgent?.personaId) return managedAgent ? [managedAgent] : [];
-  const siblings = agents.filter(
-    (agent) => agent.personaId === managedAgent.personaId,
+  return agents.filter(
+    (agent) =>
+      agent.personaId === managedAgent.personaId && !isArchived(agent.pubkey),
   );
-  const live = siblings.filter((agent) => !isArchived(agent.pubkey));
-  return live.length > 0 ? live : siblings;
 }
 
 export function buildPersonaDraftProfile(persona: AgentPersona): Profile {
