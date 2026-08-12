@@ -1,13 +1,10 @@
 import * as React from "react";
 import { ImageOff, X } from "lucide-react";
-import { toast } from "sonner";
 
-import { getRelayHttpUrl, uploadMediaBytes } from "@/shared/api/tauri";
+import { getRelayHttpUrl } from "@/shared/api/tauri";
 import { extractSupportedLinkPreviews } from "@/shared/lib/linkPreview";
-import {
-  buildLinkPreviewSnapshotTag,
-  isValidLinkPreviewSnapshotCanonicalUrl,
-} from "@/shared/lib/linkPreviewSnapshot";
+import { isValidLinkPreviewSnapshotCanonicalUrl } from "@/shared/lib/linkPreviewSnapshot";
+import { prepareLinkPreview } from "@/features/messages/lib/linkPreviewPreparationStore";
 import {
   beginRelayOriginFetch,
   getCachedRelayOrigin,
@@ -189,52 +186,13 @@ function ComposerLinkPreviewCard({
   );
 }
 
-function dataUrlBytes(dataUrl: string): Uint8Array | null {
-  const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
-  if (!match) return null;
-  try {
-    return Uint8Array.from(atob(match[2]), (char) => char.charCodeAt(0));
-  } catch {
-    return null;
-  }
-}
-
-async function uploadDataUrl(
-  dataUrl: string | null | undefined,
-  filename: string,
-) {
-  if (!dataUrl) return { url: "", sha256: "" };
-  const bytes = dataUrlBytes(dataUrl);
-  if (!bytes) throw new Error("invalid preview media data");
-  const uploaded = await uploadMediaBytes([...bytes], filename);
-  return { url: uploaded.url, sha256: uploaded.sha256 };
-}
-
-// Upload one snapshot media (image or favicon) independently so a single
-// failure degrades gracefully instead of dropping the whole preview: on
-// failure we return empty url/sha256 (a valid "no media" snapshot field) and
-// report which media failed so the caller can toast the user once.
-async function uploadSnapshotMedia(
-  dataUrl: string | null | undefined,
-  filename: string,
-  label: "thumbnail" | "favicon",
-): Promise<{ url: string; sha256: string; failed: null | typeof label }> {
-  try {
-    const { url, sha256 } = await uploadDataUrl(dataUrl, filename);
-    return { url, sha256, failed: null };
-  } catch {
-    return { url: "", sha256: "", failed: dataUrl ? label : null };
-  }
-}
-
 export function useComposerLinkPreviews(content: string, enabled = true) {
   const [suppressed, setSuppressed] = React.useState(false);
   // Debounce the content that drives resolution so typing a URL character by
   // character does not churn a new candidate href (and a flickering card) per
-  // keystroke. `content` is the live editor value; `debounced` is what actually
-  // resolves. A fast paste-and-Enter before the debounce fires is held by
-  // `hasUnresolvedLiveCandidates` below, which keeps Send disabled until the
-  // live candidates resolve — so no synchronous flush is needed at submit.
+  // keystroke. `content` is the live editor value; `debounced` drives the
+  // speculative composer card. Submit independently freezes live candidates,
+  // so a fast paste-and-Enter promotes the exact URL without waiting here.
   const [debounced, setDebounced] = React.useState(content);
   const debouncedRef = React.useRef(debounced);
   debouncedRef.current = debounced;
@@ -261,10 +219,8 @@ export function useComposerLinkPreviews(content: string, enabled = true) {
     () => extractCandidates(debounced),
     [extractCandidates, debounced],
   );
-  // Supported candidates in the LIVE content. When these differ from what has
-  // resolved (debounce not yet fired after a paste/keystroke), Send must still
-  // treat the preview as pending so a fast Enter cannot ship a bare link ahead
-  // of resolution.
+  // Supported candidates in the LIVE content. The submit handoff reads this
+  // exact set rather than the lagging debounce generation.
   const liveCandidatesRef = React.useRef<string[]>([]);
   liveCandidatesRef.current = extractCandidates(content).map(
     (preview) => preview.href,
@@ -293,12 +249,6 @@ export function useComposerLinkPreviews(content: string, enabled = true) {
   readyTagsByHrefRef.current = readyTags;
   const suppressedRef = React.useRef(suppressed);
   suppressedRef.current = suppressed;
-  const uploadsRef = React.useRef(new Map<string, number>());
-  // Suppression invalidates uploads already in flight. A generation token is
-  // stronger than checking `suppressed` at completion: if the user clears the
-  // draft and later retypes the same URL, an old pre-suppression upload still
-  // must not become the new draft's snapshot.
-  const suppressionGenerationRef = React.useRef(0);
   const activeHrefsRef = React.useRef(new Set<string>());
   activeHrefsRef.current = new Set(candidates.map((preview) => preview.href));
 
@@ -321,72 +271,21 @@ export function useComposerLinkPreviews(content: string, enabled = true) {
 
   React.useEffect(() => {
     for (const preview of previews) {
-      const uploadSuppressionGeneration = suppressionGenerationRef.current;
-      if (
-        !preview.snapshotReady ||
-        readyTags[preview.href] ||
-        uploadsRef.current.get(preview.href) === uploadSuppressionGeneration
-      )
-        continue;
-      uploadsRef.current.set(preview.href, uploadSuppressionGeneration);
-      // Upload image and favicon independently so one failure degrades to the
-      // surviving media instead of dropping the whole preview. A snapshot tag
-      // with empty media fields is valid (renders as text + favicon, or
-      // text-only), so a partial or total media failure still ships a real
-      // inline preview and the card never spins forever.
-      const uploadPromise = Promise.all([
-        uploadSnapshotMedia(
-          preview.imageDataUrl,
-          "link-preview-image.png",
-          "thumbnail",
-        ),
-        uploadSnapshotMedia(
-          preview.faviconDataUrl,
-          "link-preview-favicon.png",
-          "favicon",
-        ),
-      ])
-        .then(([image, favicon]) => {
-          if (
-            uploadSuppressionGeneration !== suppressionGenerationRef.current ||
-            !activeHrefsRef.current.has(preview.href)
-          )
-            return;
-          const failedMedia = [image.failed, favicon.failed].filter(
-            (label): label is "thumbnail" | "favicon" => label !== null,
-          );
-          if (failedMedia.length > 0) {
-            toast.error(
-              `Something went wrong with the ${failedMedia.join(" and ")}`,
-            );
-          }
-          const tag = buildLinkPreviewSnapshotTag({
-            canonicalUrl: preview.href,
-            title: preview.title,
-            siteName: preview.provider,
-            description: preview.description ?? "",
-            imageUrl: image.url,
-            imageSha256: image.sha256,
-            faviconUrl: favicon.url,
-            faviconSha256: favicon.sha256,
-          });
-          if (!tag) return;
-          // Update the ref alongside state so a submit reading
-          // `readyTagsByHrefRef` sees the tag before the next render commits.
-          readyTagsByHrefRef.current = {
-            ...readyTagsByHrefRef.current,
-            [preview.href]: tag,
-          };
-          setReadyTags((current) => ({ ...current, [preview.href]: tag }));
-        })
-        .finally(() => {
-          if (
-            uploadsRef.current.get(preview.href) === uploadSuppressionGeneration
-          ) {
-            uploadsRef.current.delete(preview.href);
-          }
-        });
-      void uploadPromise;
+      if (!preview.snapshotReady || readyTags[preview.href]) continue;
+      void prepareLinkPreview(preview).then((tag) => {
+        if (
+          !tag ||
+          suppressedRef.current ||
+          !activeHrefsRef.current.has(preview.href)
+        ) {
+          return;
+        }
+        readyTagsByHrefRef.current = {
+          ...readyTagsByHrefRef.current,
+          [preview.href]: tag,
+        };
+        setReadyTags((current) => ({ ...current, [preview.href]: tag }));
+      });
     }
   }, [previews, readyTags]);
 
@@ -395,13 +294,9 @@ export function useComposerLinkPreviews(content: string, enabled = true) {
     : candidates.flatMap((candidate) =>
         readyTags[candidate.href] ? [readyTags[candidate.href]] : [],
       );
-  // A preview is "settling" from paste until its sendable tag exists: metadata
-  // is still resolving, or it resolved and the snapshot media is uploading.
-  // Send stays disabled across the whole window so the button never flickers
-  // ready -> not-ready -> ready (buzz:// links never snapshot, so they never
-  // report settling). `imageState === "none"` is terminal (no snapshot), so it
-  // does not block. The visible suppression control is the explicit way to stop
-  // waiting and send the draft without previews.
+  // Expose speculative preparation state for card treatment and tests. It no
+  // longer gates Submit: the send flow promotes unfinished work into the
+  // navigation-safe preparation store.
   const hasResolvingSnapshots =
     !suppressed &&
     previews.some(
@@ -410,10 +305,8 @@ export function useComposerLinkPreviews(content: string, enabled = true) {
         (preview.imageState === "pending" ||
           (preview.snapshotReady && !readyTags[preview.href])),
     );
-  // A supported link in the LIVE content that resolution has not caught up to
-  // yet (debounce pending, or resolved for an older revision) also counts as
-  // settling — otherwise a paste-and-immediate-Enter would ship a bare link
-  // before resolution even starts. buzz:// links never snapshot, so ignore them.
+  // Include live candidates not reached by the debounce yet so the composer
+  // accurately reports whether its visible generation is still catching up.
   const hasUnresolvedLiveCandidates =
     !suppressed &&
     liveCandidatesRef.current.some(
@@ -424,12 +317,10 @@ export function useComposerLinkPreviews(content: string, enabled = true) {
     );
   const hasPendingSnapshots =
     hasResolvingSnapshots || hasUnresolvedLiveCandidates;
-  // Ref mirror so a synchronous submit guard can read the pending state on any
-  // entry point (Enter, form, auto-submit), not just the reactive button prop.
+  // Ref mirror retained for consumers that need an imperative status read.
   const hasPendingSnapshotsRef = React.useRef(hasPendingSnapshots);
   hasPendingSnapshotsRef.current = hasPendingSnapshots;
   const hideAll = React.useCallback(() => {
-    suppressionGenerationRef.current += 1;
     setSuppressed(true);
   }, []);
   const previewList = previews.length ? (
@@ -451,12 +342,9 @@ export function useComposerLinkPreviews(content: string, enabled = true) {
       </AttachmentGroup>
     </div>
   ) : null;
-  // Snapshot tags for a submit, read synchronously at submit start from the
-  // LIVE candidate set (liveCandidatesRef) via `selectSubmitTags` — so the tags
-  // always correspond to the content actually being sent, never a debounced set
-  // that still holds a just-removed URL. No await: Send is disabled until every
-  // settling preview has its tag or the user suppresses previews, so at submit
-  // time the tags that will ever exist already exist.
+  // Snapshot tags already available at submit, selected from the LIVE candidate
+  // set so a debounced, just-removed URL can never leak into the event. The send
+  // flow promotes any missing candidates and ignores this partial set.
   const getReadyTags = React.useCallback(
     () =>
       selectSubmitTags(
@@ -466,8 +354,13 @@ export function useComposerLinkPreviews(content: string, enabled = true) {
       ),
     [],
   );
+  const getLiveCandidates = React.useCallback(
+    () => extractCandidates(content),
+    [content, extractCandidates],
+  );
   return {
     previewList,
+    getLiveCandidates,
     getReadyTags,
     hasPendingSnapshots,
     hasPendingSnapshotsRef,

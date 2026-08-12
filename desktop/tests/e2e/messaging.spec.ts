@@ -252,6 +252,10 @@ test.beforeEach(async ({ page }, testInfo) => {
                       }
                     : testInfo.title.includes(
                           "Enter during an in-flight snapshot upload",
+                        ) ||
+                        testInfo.title.includes("Skip wins the upload race") ||
+                        testInfo.title.includes(
+                          "immediately pressing Enter prepares",
                         )
                       ? {
                           linkPreviewMetadata: {
@@ -267,6 +271,9 @@ test.beforeEach(async ({ page }, testInfo) => {
                         }
                       : testInfo.title.includes(
                             "snapshot thumbnail upload failure",
+                          ) ||
+                          testInfo.title.includes(
+                            "snapshot media upload failure",
                           )
                         ? {
                             linkPreviewMetadata: {
@@ -927,7 +934,7 @@ test("explicit cancellation keeps pending link preview from silently sending bar
   expect(linkPreviewTags).toEqual([["link-preview", "none"]]);
 });
 
-test("Enter during an in-flight snapshot upload cannot ship a bare link", async ({
+test("Enter during an in-flight snapshot upload hands off and sends once", async ({
   page,
 }) => {
   const previewUrl = "https://github.com/block/buzz/pull/3246";
@@ -936,32 +943,16 @@ test("Enter during an in-flight snapshot upload cannot ship a bare link", async 
   const input = page.getByTestId("message-input");
   await input.fill(previewUrl);
 
-  const composerPreviews = page.locator("[data-composer-link-previews]");
-  const card = composerPreviews.locator("[data-link-preview-composer-card]");
-  await expect(card).toBeVisible();
-  // Metadata resolves (image painted) but the sendable tag is not ready yet:
-  // the snapshot media upload is still in flight (linkPreviewUploadDelayMs), so
-  // the composer reports the preview as still pending.
+  const card = page.locator("[data-link-preview-composer-card]");
   await expect(card).toHaveAttribute("data-image-state", "image");
-  await expect(card.locator("[data-link-preview-thumbnail] img")).toHaveCSS(
-    "opacity",
-    "0.5",
-  );
-  await expect(card.getByTestId("link-preview-text-placeholder")).toBeVisible();
   await expect(card).toHaveAttribute("data-snapshot-tag-ready", "false");
-  await expect(composerPreviews).toHaveAttribute(
-    "data-has-pending-snapshots",
-    "true",
-  );
 
-  // Drive Enter (not a disabled-button click, which the browser swallows on its
-  // own) while the upload is deterministically in flight. The synchronous submit
-  // guard must reject it: no send_channel_message call may occur before the tag
-  // is ready, or the link would ship bare. This is the core Enter-bypass fix —
-  // the disabled state is enforced on the keyboard path, not just the button.
-  await expect(input).toBeFocused();
   await input.press("Enter");
-  await input.press("Enter");
+  await expect(input).toHaveText("");
+  const progress = page.getByTestId("composer-upload-progress");
+  await expect(progress).toHaveAccessibleName("Preparing link preview");
+  await expect(page.getByTestId("composer-upload-cancel")).toHaveText("Skip");
+
   const sendsDuringUpload = await page.evaluate(
     () =>
       (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
@@ -970,44 +961,57 @@ test("Enter during an in-flight snapshot upload cannot ship a bare link", async 
   );
   expect(sendsDuringUpload).toBe(0);
 
-  // Once the upload settles the tag is captured and Send re-enables. Sending
-  // now lands the preview snapshot matching the body.
-  await expect(card).toHaveAttribute("data-snapshot-tag-ready", "true");
-  await expect(card.locator("[data-link-preview-thumbnail] img")).toHaveCSS(
-    "opacity",
-    "1",
-  );
-  await expect(card.getByTestId("link-preview-text-placeholder")).toHaveCount(
-    0,
-  );
-  await expect(page.getByTestId("send-message")).toBeEnabled();
-  await input.press("Enter");
   const row = page.getByTestId("message-row").last();
   await expect(row).toContainText(previewUrl);
   await expect(row.locator("[data-link-preview]")).toBeVisible();
-
-  const linkPreviewTags = await page.evaluate(() => {
-    const call = [...(window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])]
-      .reverse()
-      .find((entry) => entry.command === "send_channel_message");
-    return (
-      call?.payload as { linkPreviewTags?: string[][] | null } | undefined
-    )?.linkPreviewTags;
-  });
-  expect(linkPreviewTags?.map((tag) => tag[3])).toEqual([previewUrl]);
+  await expect(progress).toHaveCount(0);
+  const sends = await page.evaluate(
+    () =>
+      (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+        (entry) => entry.command === "send_channel_message",
+      ).length,
+  );
+  expect(sends).toBe(1);
 });
 
-test("draft auto-send with a link preview waits for settling and sends exactly once", async ({
+test("Skip wins the upload race and sends without preview", async ({
   page,
 }) => {
-  // Regression for the one-shot auto-submit blocker: a confirmed Drafts-panel
-  // "Send message" for a draft containing a supported link is normally still
-  // inside the preview settling window when the mount-only auto-submit effect
-  // fires. The old effect cleared the ?autoSend trigger then fired submit once
-  // at setTimeout(0); submit bailed at the pending-snapshot guard and the
-  // one-shot never retried, so the confirmed draft was silently never sent.
-  // The effect must instead wait until settling finishes, then send exactly
-  // once — with the resolved snapshot tag attached.
+  const previewUrl = "https://github.com/block/buzz/pull/3246?skip=1";
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  const input = page.getByTestId("message-input");
+  await input.fill(previewUrl);
+  await expect(
+    page.locator("[data-link-preview-composer-card]"),
+  ).toHaveAttribute("data-snapshot-tag-ready", "false");
+
+  await input.press("Enter");
+  const skip = page.getByTestId("composer-upload-cancel");
+  await expect(skip).toHaveText("Skip");
+  await skip.click();
+
+  const row = page.getByTestId("message-row").last();
+  await expect(row).toContainText(previewUrl);
+  await expect(row.locator("[data-link-preview]")).toHaveCount(0);
+  await page.waitForTimeout(1_500);
+  const calls = await page.evaluate(() =>
+    (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+      (entry) => entry.command === "send_channel_message",
+    ),
+  );
+  expect(calls).toHaveLength(1);
+  expect(
+    (calls[0]?.payload as { linkPreviewTags?: string[][] }).linkPreviewTags,
+  ).toEqual([["link-preview", "none"]]);
+});
+
+test("draft auto-send promotes link preview preparation and sends exactly once", async ({
+  page,
+}) => {
+  // A confirmed Drafts-panel send must fire once immediately, promote preview
+  // preparation into the background flow, and eventually publish one enriched
+  // event rather than consuming the one-shot trigger while the hook debounces.
   const previewUrl = "https://github.com/block/buzz/pull/3246?draft=autosend";
   const channelId = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 
@@ -1062,9 +1066,7 @@ test("draft auto-send with a link preview waits for settling and sends exactly o
   await expect(dialog).toBeVisible({ timeout: 4_000 });
   await dialog.getByRole("button", { name: "Send", exact: true }).click();
 
-  // Exactly one send eventually fires (after the ~500 ms metadata settle), and
-  // it carries the link preview snapshot tag — proving the draft was not
-  // dropped during the settling window and did not double-send on retry.
+  // Exactly one publish eventually fires and carries the promoted snapshot.
   await expect
     .poll(async () =>
       page.evaluate(
@@ -1124,7 +1126,7 @@ test("rapid Enter presses on a ready link preview send exactly once", async ({
     .toBe(1);
 });
 
-test("pasting a link preview and immediately pressing Enter waits for resolution", async ({
+test("pasting a link and immediately pressing Enter prepares it after submit", async ({
   page,
 }) => {
   const previewUrl = "https://github.com/block/buzz/pull/3246?fast=send";
@@ -1132,39 +1134,23 @@ test("pasting a link preview and immediately pressing Enter waits for resolution
   await page.getByTestId("channel-general").click();
   const input = page.getByTestId("message-input");
 
-  // Fill the URL and press Enter within the debounce window, before resolution
-  // has even started. The live-candidate guard must treat the unresolved link
-  // as pending and reject the Enter, so the message cannot ship bare.
   await input.fill(previewUrl);
   await input.press("Enter");
-  const sendsBeforeResolution = await page.evaluate(
-    () =>
-      (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
-        (entry) => entry.command === "send_channel_message",
-      ).length,
-  );
-  expect(sendsBeforeResolution).toBe(0);
+  await expect(input).toHaveText("");
+  await expect(page.getByTestId("composer-upload-cancel")).toHaveText("Skip");
 
-  // The debounce fires, resolution + upload complete, and only then does Send
-  // become available. A press now lands the snapshot.
-  await waitForReadyComposerSnapshots(page);
-  await input.press("Enter");
   const row = page.getByTestId("message-row").last();
   await expect(row).toContainText(previewUrl);
   await expect(row.locator("[data-link-preview]")).toBeVisible();
-
-  const linkPreviewTags = await page.evaluate(() => {
-    const call = [...(window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])]
-      .reverse()
-      .find((entry) => entry.command === "send_channel_message");
-    return (
-      call?.payload as { linkPreviewTags?: string[][] | null } | undefined
-    )?.linkPreviewTags;
-  });
-  expect(linkPreviewTags?.map((tag) => tag[3])).toEqual([previewUrl]);
+  const calls = await page.evaluate(() =>
+    (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+      (entry) => entry.command === "send_channel_message",
+    ),
+  );
+  expect(calls).toHaveLength(1);
 });
 
-test("a snapshot thumbnail upload failure toasts and still sends with the favicon", async ({
+test("a snapshot media upload failure still sends without a preview", async ({
   page,
 }) => {
   const previewUrl = "https://github.com/block/buzz/pull/3246?upload=fail";
@@ -1172,41 +1158,18 @@ test("a snapshot thumbnail upload failure toasts and still sends with the favico
   await page.getByTestId("channel-general").click();
   const input = page.getByTestId("message-input");
   await input.fill(previewUrl);
-
-  // The thumbnail upload is configured to reject while the favicon succeeds.
-  // The preview must degrade to the surviving favicon rather than dropping the
-  // whole card or spinning forever: a tag still lands, Send still enables.
-  await waitForReadyComposerSnapshots(page);
-  await expect(
-    page
-      .locator("[data-sonner-toast]")
-      .filter({ hasText: "Something went wrong with the thumbnail" }),
-  ).toBeVisible();
-  await expect(page.getByTestId("send-message")).toBeEnabled();
-
   await input.press("Enter");
+
   const row = page.getByTestId("message-row").last();
   await expect(row).toContainText(previewUrl);
-  await expect(row.locator("[data-link-preview]")).toBeVisible();
-
-  // The snapshot tag exists (survivor media) but carries no image url — proving
-  // the graceful per-media degrade rather than a dropped or all-or-nothing tag.
-  const imageUrl = await page.evaluate(() => {
+  await expect(row.locator("[data-link-preview]")).toHaveCount(0);
+  const tags = await page.evaluate(() => {
     const call = [...(window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])]
       .reverse()
       .find((entry) => entry.command === "send_channel_message");
-    const tags = (
-      call?.payload as { linkPreviewTags?: string[][] | null } | undefined
-    )?.linkPreviewTags;
-    const snapshot = tags?.find(
-      (tag) => tag[0] === "link-preview" && tag[1] === "snapshot",
-    );
-    // Snapshot tag layout: ["link-preview","snapshot",<version>,<url>,...pairs].
-    const pairs = snapshot?.slice(4) ?? [];
-    const imageIndex = pairs.indexOf("image");
-    return imageIndex >= 0 ? pairs[imageIndex + 1] : null;
+    return (call?.payload as { linkPreviewTags?: string[][] }).linkPreviewTags;
   });
-  expect(imageUrl).toBeFalsy();
+  expect(tags).toEqual([["link-preview", "none"]]);
 });
 
 test("editing a message excludes link previews entirely", async ({ page }) => {

@@ -8,20 +8,25 @@ import { cn } from "@/shared/lib/cn";
 import { Spinner } from "@/shared/ui/spinner";
 
 export function ComposerUploadProgressPill({
+  actionLabel = "Cancel",
   canCancel,
   isUploading,
   onCancel,
   phase,
+  phaseLabel: phaseLabelOverride,
   percentage,
 }: {
+  actionLabel?: string;
   canCancel: boolean;
   isUploading: boolean;
   onCancel: () => void;
   phase: BackgroundMediaUploadPhase;
+  phaseLabel?: string;
   percentage: number;
 }) {
   const reducedMotion = useReducedMotion();
-  const phaseLabel = backgroundMediaUploadPhaseLabel(phase);
+  const phaseLabel =
+    phaseLabelOverride ?? backgroundMediaUploadPhaseLabel(phase);
   const isTransferring = phase === "uploading";
   const phaseTransition = reducedMotion
     ? { duration: 0 }
@@ -159,7 +164,7 @@ export function ComposerUploadProgressPill({
                   onClick={onCancel}
                   type="button"
                 >
-                  Cancel
+                  {actionLabel}
                 </button>
               ) : null}
             </div>

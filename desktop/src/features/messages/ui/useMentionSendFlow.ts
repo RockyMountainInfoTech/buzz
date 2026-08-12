@@ -555,10 +555,10 @@ export function useMentionSendFlow({
               ),
             ]),
           );
-          const finalOutgoingTags = mergeOutgoingTags(
-            mediaTags,
-            outgoingTags ?? [],
-          );
+          const finalOutgoingTags = mergeOutgoingTags(mediaTags, [
+            ...(outgoingTags ?? []),
+            ...((await draft.preparedLinkPreviews?.promise) ?? []),
+          ]);
           if (signal?.aborted) return;
           await send(
             finalContent,
@@ -710,6 +710,7 @@ export function useMentionSendFlow({
       pendingImeta,
       queuedAttachments = [],
       linkPreviewTags = [],
+      preparedLinkPreviews = null,
       sentDraftKey,
       recoveryDraftKey,
       spoileredAttachmentUrls = new Set(),
@@ -802,6 +803,7 @@ export function useMentionSendFlow({
           mentionPubkeys: pubkeys,
           nonMemberPubkeys: promptNonMemberPubkeys,
           outgoingTags,
+          preparedLinkPreviews,
           preparedManagedAgents: personaMentionResult.agents,
           readyAgentPubkeys:
             channelType === "dm" && onPrepareSendChannel
