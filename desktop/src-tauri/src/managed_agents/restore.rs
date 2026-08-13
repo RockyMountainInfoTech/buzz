@@ -500,13 +500,21 @@ pub async fn restore_managed_agents_on_launch(
     // ── Profile reconciliation (fire-and-forget) ────────────────────────────
     // Spawn background tasks to ensure each restored agent's kind:0 profile is
     // published on the relay. Same pattern as the UI start path.
+    let reconcile_generation = owner.generation();
     for (pubkey, data) in reconcile_items {
         let reconcile_app = app.clone();
+        let reconcile_workspace_relay = workspace_relay.clone();
         tauri::async_runtime::spawn(async move {
             let state = reconcile_app.state::<AppState>();
-            if let Err(e) =
-                crate::commands::reconcile_agent_profile(&state, &reconcile_app, &pubkey, &data)
-                    .await
+            if let Err(e) = crate::commands::agents::profile::reconcile_agent_profile_for_workspace(
+                &state,
+                &reconcile_app,
+                &pubkey,
+                &data,
+                &reconcile_workspace_relay,
+                Some(reconcile_generation),
+            )
+            .await
             {
                 eprintln!("buzz-desktop: profile reconciliation failed for agent {pubkey}: {e}");
             }

@@ -72,18 +72,36 @@ pub(crate) async fn reconcile_agent_profile(
     agent_pubkey: &str,
     data: &ProfileReconcileData,
 ) -> Result<(), String> {
+    let workspace_relay = relay_ws_url_with_override(state);
+    reconcile_agent_profile_for_workspace(state, app, agent_pubkey, data, &workspace_relay, None)
+        .await
+}
+
+pub(crate) async fn reconcile_agent_profile_for_workspace(
+    state: &AppState,
+    app: &AppHandle,
+    agent_pubkey: &str,
+    data: &ProfileReconcileData,
+    workspace_relay: &str,
+    transition_generation: Option<u64>,
+) -> Result<(), String> {
     use crate::relay::{query_agent_profile, sync_managed_agent_profile};
 
-    // An explicit per-agent relay wins; an empty one falls back to the active
-    // workspace relay. Resolved once and used for both the read and write-back.
-    let relay_url = crate::relay::effective_agent_relay_url(
-        &data.relay_url,
-        &relay_ws_url_with_override(state),
-    );
+    let transition_is_current = || {
+        state
+            .workspace_transition
+            .allows_profile_reconcile(transition_generation)
+    };
 
-    if !state
-        .managed_agent_profile_reconcile_enabled
-        .load(std::sync::atomic::Ordering::Acquire)
+    // An explicit per-agent relay wins; an empty one falls back to the captured
+    // workspace relay. Restore callers also carry the transition generation so
+    // a superseded restore cannot publish into the winning workspace.
+    let relay_url = crate::relay::effective_agent_relay_url(&data.relay_url, workspace_relay);
+
+    if !transition_is_current()
+        || !state
+            .managed_agent_profile_reconcile_enabled
+            .load(std::sync::atomic::Ordering::Acquire)
     {
         return Ok(());
     }
@@ -143,9 +161,10 @@ pub(crate) async fn reconcile_agent_profile(
     let agent_keys = Keys::parse(&data.private_key_nsec)
         .map_err(|e| format!("failed to parse agent keys: {e}"))?;
 
-    if !state
-        .managed_agent_profile_reconcile_enabled
-        .load(std::sync::atomic::Ordering::Acquire)
+    if !transition_is_current()
+        || !state
+            .managed_agent_profile_reconcile_enabled
+            .load(std::sync::atomic::Ordering::Acquire)
     {
         return Ok(());
     }

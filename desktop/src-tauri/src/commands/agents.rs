@@ -1365,7 +1365,7 @@ use deploy::{deploy_payload_json, DeployProjections};
 use deploy::{ensure_remote_provider_supported, resolve_deploy_model_provider};
 
 #[path = "agents_profile.rs"]
-mod profile;
+pub(crate) mod profile;
 #[cfg(test)]
 use profile::{profile_needs_sync, resolve_legacy_avatar};
 pub(crate) use profile::{reconcile_agent_profile, ProfileReconcileData};

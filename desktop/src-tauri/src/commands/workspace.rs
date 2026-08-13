@@ -134,6 +134,10 @@ impl<'a> WorkspaceTransitionOwner<'a> {
         self.transition.is_current(self.generation)
     }
 
+    pub(crate) fn generation(self) -> u64 {
+        self.generation
+    }
+
     pub(crate) fn lock_if_current(self) -> Option<std::sync::MutexGuard<'a, ()>> {
         let guard = self
             .transition
@@ -169,8 +173,12 @@ impl WorkspaceTransitionState {
         self.generation.fetch_add(1, Ordering::AcqRel) + 1
     }
 
-    fn is_current(&self, generation: u64) -> bool {
+    pub(crate) fn is_current(&self, generation: u64) -> bool {
         self.generation.load(Ordering::Acquire) == generation
+    }
+
+    pub(crate) fn allows_profile_reconcile(&self, generation: Option<u64>) -> bool {
+        generation.is_none_or(|generation| self.is_current(generation))
     }
 
     pub(crate) fn current_generation(&self) -> u64 {
@@ -521,6 +529,45 @@ mod tests {
         assert_eq!(stale_owner.while_current(|| installed = true), None);
         assert!(!installed);
         assert!(transition.owner(winner).is_current());
+    }
+
+    #[test]
+    fn unowned_profile_reconcile_remains_enabled() {
+        let transition = WorkspaceTransitionState::default();
+        assert!(transition.allows_profile_reconcile(None));
+    }
+
+    #[test]
+    fn superseded_restore_profile_tail_stops_before_relay_query() {
+        let transition = WorkspaceTransitionState::default();
+        let stale_owner = transition.owner(transition.claim_next());
+        let stale_generation = stale_owner.generation();
+        transition.claim_next();
+
+        let mut queried = false;
+        if transition.allows_profile_reconcile(Some(stale_generation)) {
+            queried = true;
+        }
+
+        assert!(!queried);
+    }
+
+    #[test]
+    fn superseded_restore_profile_tail_stops_before_relay_publish() {
+        let transition = WorkspaceTransitionState::default();
+        let stale_owner = transition.owner(transition.claim_next());
+        let stale_generation = stale_owner.generation();
+        assert!(transition.allows_profile_reconcile(Some(stale_generation)));
+
+        // The query can await while a newer workspace claims ownership. The
+        // restore tail must check the same generation again before publishing.
+        transition.claim_next();
+        let mut published = false;
+        if transition.allows_profile_reconcile(Some(stale_generation)) {
+            published = true;
+        }
+
+        assert!(!published);
     }
 
     #[test]
