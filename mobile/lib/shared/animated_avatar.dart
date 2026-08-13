@@ -1,12 +1,13 @@
-/// Animated avatar URL scheme shared with the desktop client.
-///
-/// The static poster is the normal selected frame. The animated PNG URL lives
-/// in the fragment so clients that do not understand the scheme render only
-/// the poster:
-///
-///   posterUrl#buzz-anim=encodedAnimationUrl
+// Animated avatar URL scheme shared with the desktop client.
+//
+// The static poster is the normal selected frame. The animated PNG URL lives
+// in the fragment so clients that do not understand the scheme render only
+// the poster:
+//
+//   posterUrl#buzz-anim=encodedAnimationUrl
 const _animatedAvatarSeparator = '#buzz-anim=';
 
+/// The static poster and animated image URLs encoded in an avatar URL.
 class AnimatedAvatarDescriptor {
   const AnimatedAvatarDescriptor({
     required this.posterUrl,
@@ -17,6 +18,10 @@ class AnimatedAvatarDescriptor {
   final String animationUrl;
 }
 
+/// Parses the Buzz animated-avatar fragment scheme from [url].
+///
+/// Returns `null` when the poster or animation URL is missing, malformed, or
+/// does not use HTTP(S).
 AnimatedAvatarDescriptor? parseAnimatedAvatarUrl(String? url) {
   if (url == null || url.isEmpty) return null;
 
