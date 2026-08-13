@@ -7,7 +7,6 @@ import {
   useBackgroundLinkPreviewPreparation,
 } from "@/features/messages/lib/linkPreviewPreparationStore";
 import { ComposerUploadProgressPill } from "@/features/messages/ui/ComposerUploadProgressPill";
-import { LinkPreviewDebugOverlay } from "@/features/messages/ui/LinkPreviewDebugOverlay";
 
 export function ComposerUploadProgressOverlay() {
   const backgroundUpload = useBackgroundMediaUpload();
@@ -15,7 +14,6 @@ export function ComposerUploadProgressOverlay() {
 
   return (
     <div className="pointer-events-auto">
-      <LinkPreviewDebugOverlay diagnostics={linkPreviews.diagnostics} />
       {linkPreviews.isPreparing ? (
         <ComposerUploadProgressPill
           actionLabel="Skip"
