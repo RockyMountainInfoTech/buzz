@@ -389,6 +389,8 @@ class ChannelsNotifier extends AsyncNotifier<List<Channel>> {
         ]),
     });
     _memberSnapshotsByChannelId = Map.unmodifiable(snapshots);
+  }
+
   /// Fetches each channel's independent latest-message window in one HTTP
   /// bridge request. The relay preserves NIP-01 per-filter limits while
   /// executing the filters with bounded concurrency, avoiding an unbounded

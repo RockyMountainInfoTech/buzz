@@ -16,6 +16,7 @@ class _RecordingSessionNotifier extends RelaySessionNotifier {
   _subscriptions = [];
   Completer<void>? mentionFetchGate;
   bool failNextMentionFetch = false;
+  bool failNextQueryRelay = false;
   int mentionFetchCount = 0;
   int activeMentionFetches = 0;
   int maxActiveMentionFetches = 0;
@@ -58,6 +59,10 @@ class _RecordingSessionNotifier extends RelaySessionNotifier {
     Duration timeout = const Duration(seconds: 8),
   }) async {
     queryFilterCounts.add(filters.length);
+    if (failNextQueryRelay) {
+      failNextQueryRelay = false;
+      throw StateError('transient HTTP query failure');
+    }
     for (final filter in filters) {
       final h = filter.tags['#h'];
       if (h != null) dmQueries.add(h);
@@ -228,6 +233,30 @@ void main() {
     expect(session.dmQueries, isEmpty);
   });
 
+  test('falls back to websocket history when the HTTP batch fails', () async {
+    final session = _RecordingSessionNotifier()
+      ..seed(_mentionEvent('fallback-mention', 1_700_000_001))
+      ..failNextQueryRelay = true;
+    final container = ProviderContainer(
+      overrides: [
+        relayConfigProvider.overrideWith(_FixedRelayConfigNotifier.new),
+        myPubkeyProvider.overrideWithValue('me_pk'),
+        relaySessionProvider.overrideWith(() => session),
+        channelsProvider.overrideWith(
+          () => _FixedChannelsNotifier(const <Channel>[]),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(channelsProvider.future);
+    final feed = await container.read(activityProvider.future);
+
+    expect(session.queryFilterCounts, [3]);
+    expect(session.mentionFetchCount, 1);
+    expect(feed.mentions.map((item) => item.id), ['fallback-mention']);
+  });
+
   test(
     'refreshes the inbox projection when addressed activity arrives',
     () async {
@@ -346,7 +375,7 @@ void main() {
     expect(session.maxActiveMentionFetches, 1);
   });
 
-  test('retains the loaded inbox when a live refresh fails', () async {
+  test('recovers a live refresh through websocket history fallback', () async {
     final session = _RecordingSessionNotifier()
       ..seed(_mentionEvent('existing', 1_700_000_001));
     final container = ProviderContainer(
@@ -371,7 +400,10 @@ void main() {
     await _waitFor(() => session.mentionFetchCount >= 2);
     await Future<void>.delayed(const Duration(milliseconds: 10));
 
-    expect(container.read(inboxItemsProvider).single.id, 'existing');
+    expect(
+      container.read(inboxItemsProvider).map((item) => item.id),
+      containsAll(['existing', 'newer']),
+    );
   });
 }
 

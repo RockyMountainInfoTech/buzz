@@ -7,22 +7,22 @@ const _agent = 'agent';
 const _human = 'human';
 
 void main() {
-  test('implicitly addresses a participating DM agent', () {
+  test('implicitly addresses every participating DM recipient', () {
     expect(
       messageMentionPubkeys(
         channel: _channel(
           type: 'dm',
-          participantPubkeys: const [_self, _agent],
+          participantPubkeys: const [_self, _agent, _human],
         ),
         senderPubkey: _self,
         explicitMentions: const [],
-        dmAgentPubkeys: const [_agent],
+        dmRecipientPubkeys: const [_agent, _human],
       ),
-      [_agent],
+      [_agent, _human],
     );
   });
 
-  test('preserves explicit mentions alongside the implicit DM agent', () {
+  test('preserves and deduplicates explicit mentions with DM recipients', () {
     expect(
       messageMentionPubkeys(
         channel: _channel(
@@ -31,13 +31,13 @@ void main() {
         ),
         senderPubkey: _self,
         explicitMentions: const [_human, _agent],
-        dmAgentPubkeys: const [_agent],
+        dmRecipientPubkeys: const [_agent],
       ),
       [_human, _agent],
     );
   });
 
-  test('does not implicitly address human DMs or channel agents', () {
+  test('addresses human DMs but not ordinary channel members', () {
     expect(
       messageMentionPubkeys(
         channel: _channel(
@@ -46,9 +46,9 @@ void main() {
         ),
         senderPubkey: _self,
         explicitMentions: const [],
-        dmAgentPubkeys: const [],
+        dmRecipientPubkeys: const [_human],
       ),
-      isEmpty,
+      [_human],
     );
     expect(
       messageMentionPubkeys(
@@ -58,7 +58,7 @@ void main() {
         ),
         senderPubkey: _self,
         explicitMentions: const [],
-        dmAgentPubkeys: const [_agent],
+        dmRecipientPubkeys: const [_agent],
       ),
       isEmpty,
     );

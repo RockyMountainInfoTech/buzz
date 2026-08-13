@@ -1,6 +1,5 @@
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 
-import '../../shared/mentions/agent_identity_provider.dart';
 import '../../shared/relay/relay.dart';
 import '../channels/channel_management_provider.dart';
 import '../profile/user_cache_provider.dart';
@@ -14,7 +13,6 @@ import 'message_mention_pubkeys.dart';
 class SendMessage {
   final SignedEventRelay _signedEventRelay;
   final Future<List<ChannelMember>> Function(String channelId) _fetchMembers;
-  final Future<Set<String>> Function() _fetchDirectoryAgentPubkeys;
   final Map<String, UserProfile> Function() _readUserCache;
   final void Function(String channelId, NostrEvent event) _addLocalMessage;
   final void Function(String channelId, String eventId) _completeLocalMessage;
@@ -25,7 +23,6 @@ class SendMessage {
     required SignedEventRelay signedEventRelay,
     required Future<List<ChannelMember>> Function(String channelId)
     fetchMembers,
-    required Future<Set<String>> Function() fetchDirectoryAgentPubkeys,
     required Map<String, UserProfile> Function() readUserCache,
     required void Function(String channelId, NostrEvent event) addLocalMessage,
     required void Function(String channelId, String eventId)
@@ -34,7 +31,6 @@ class SendMessage {
     bool Function()? isDeliveryValid,
   }) : _signedEventRelay = signedEventRelay,
        _fetchMembers = fetchMembers,
-       _fetchDirectoryAgentPubkeys = fetchDirectoryAgentPubkeys,
        _readUserCache = readUserCache,
        _addLocalMessage = addLocalMessage,
        _completeLocalMessage = completeLocalMessage,
@@ -63,15 +59,15 @@ class SendMessage {
     final explicitMentions =
         mentionPubkeys ?? await _resolveMentions(content, channelId);
     final authorPubkey = _signedEventRelay.pubkey;
-    final dmAgentPubkeys = channel?.isDm == true
-        ? await _fetchDmAgentPubkeys(channelId, channel!, authorPubkey)
+    final dmRecipientPubkeys = channel?.isDm == true
+        ? await _fetchDmRecipientPubkeys(channelId, channel!, authorPubkey)
         : null;
-    final resolvedMentions = dmAgentPubkeys != null
+    final resolvedMentions = dmRecipientPubkeys != null
         ? messageMentionPubkeys(
             channel: channel!,
             senderPubkey: authorPubkey,
             explicitMentions: explicitMentions,
-            dmAgentPubkeys: dmAgentPubkeys,
+            dmRecipientPubkeys: dmRecipientPubkeys,
           )
         : explicitMentions;
 
@@ -112,33 +108,16 @@ class SendMessage {
     }
   }
 
-  /// Resolve the agent identity that is actually a current member of this DM.
+  /// Resolve every identity that is actually a current member of this DM.
   ///
   /// Membership is authoritative for delivery. The channel metadata's `p`
-  /// tags can lag an agent replacement, which previously caused mobile to tag
-  /// a stale identity while a visible explicit mention correctly targeted the
-  /// current member. The directory identifies agents without a bot role; the
-  /// metadata is only a fallback while the membership snapshot is unavailable.
-  Future<Set<String>> _fetchDmAgentPubkeys(
+  /// tags can lag membership changes, so they are only used when the membership
+  /// snapshot is unavailable.
+  Future<Set<String>> _fetchDmRecipientPubkeys(
     String channelId,
     Channel channel,
     String? authorPubkey,
   ) async {
-    final directoryAgentPubkeys = <String>{};
-    try {
-      directoryAgentPubkeys.addAll(
-        (await _fetchDirectoryAgentPubkeys()).map((pk) => pk.toLowerCase()),
-      );
-    } catch (_) {
-      // A current bot membership role can still identify the DM agent.
-    }
-
-    final profileAgentPubkeys = {
-      for (final profile in _readUserCache().values)
-        if (profile.ownerPubkey?.trim().isNotEmpty == true)
-          profile.pubkey.toLowerCase(),
-    };
-
     List<ChannelMember>? members;
     try {
       members = await _fetchMembers(channelId);
@@ -148,26 +127,15 @@ class SendMessage {
     }
 
     final author = authorPubkey?.toLowerCase();
-    if (members != null && members.isNotEmpty) {
-      final targets = {
-        for (final member in members)
-          if (member.pubkey.toLowerCase() != author &&
-              (member.isBot ||
-                  directoryAgentPubkeys.contains(member.pubkey.toLowerCase()) ||
-                  profileAgentPubkeys.contains(member.pubkey.toLowerCase())))
-            member.pubkey.toLowerCase(),
-      };
-      return targets;
-    }
-
-    final targets = {
-      for (final participant in channel.participantPubkeys)
-        if (participant.toLowerCase() != author &&
-            (directoryAgentPubkeys.contains(participant.toLowerCase()) ||
-                profileAgentPubkeys.contains(participant.toLowerCase())))
+    final participants = members != null
+        ? members.map((member) => member.pubkey)
+        : channel.participantPubkeys;
+    return {
+      for (final participant in participants)
+        if (participant.trim().isNotEmpty &&
+            participant.toLowerCase() != author)
           participant.toLowerCase(),
     };
-    return targets;
   }
 
   void _ensureDeliveryValid() {
@@ -258,10 +226,6 @@ final sendMessageProvider = Provider<SendMessage>((ref) {
     ),
     fetchMembers: (channelId) =>
         ref.read(channelMembersProvider(channelId).future),
-    fetchDirectoryAgentPubkeys: () async => {
-      for (final agent in await ref.read(agentDirectoryProvider.future))
-        agent.pubkey.toLowerCase(),
-    },
     readUserCache: () => ref.read(userCacheProvider),
     addLocalMessage: (channelId, event) => ref
         .read(channelMessagesProvider(channelId).notifier)

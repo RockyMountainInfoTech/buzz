@@ -248,7 +248,7 @@ class ActivityNotifier extends AsyncNotifier<HomeFeedResponse> {
     // executing the batch with bounded server-side concurrency. One request
     // here replaces the four simultaneous websocket history subscriptions that
     // otherwise compete with channel and preference startup sync.
-    final events = await session.queryRelay(filters);
+    final events = await _queryWithWebSocketFallback(session, filters);
 
     bool isFromOther(NostrEvent e) =>
         e.pubkey.toLowerCase() != myPk.toLowerCase();
@@ -332,6 +332,41 @@ class ActivityNotifier extends AsyncNotifier<HomeFeedResponse> {
           if (i.category == 'agent_activity') i,
       ],
     );
+  }
+
+  Future<List<NostrEvent>> _queryWithWebSocketFallback(
+    RelaySessionNotifier session,
+    List<NostrFilter> filters,
+  ) async {
+    try {
+      return await session.queryRelay(filters);
+    } catch (error) {
+      debugPrint(
+        '[ActivityNotifier] batched history query failed; '
+        'using bounded websocket fallback: $error',
+      );
+    }
+
+    const fallbackConcurrency = 4;
+    final events = <NostrEvent>[];
+    for (var start = 0; start < filters.length; start += fallbackConcurrency) {
+      final end = start + fallbackConcurrency < filters.length
+          ? start + fallbackConcurrency
+          : filters.length;
+      final results = await Future.wait(
+        filters.sublist(start, end).map((filter) async {
+          try {
+            return await session.fetchHistory(filter);
+          } catch (_) {
+            return const <NostrEvent>[];
+          }
+        }),
+      );
+      for (final result in results) {
+        events.addAll(result);
+      }
+    }
+    return events;
   }
 
   FeedItem _feedItem(NostrEvent event, {required String category}) {
