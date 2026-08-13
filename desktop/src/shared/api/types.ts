@@ -454,16 +454,16 @@ export type CancelManagedAgentTurnResult = {
 
 /**
  * Outcome of a live `switch_model` control frame, surfaced asynchronously via
- * the agent's `control_result` observer frame. Busy path: `sent` (cancel +
- * requeue on the new model) or `turn_ending` (oneshot already consumed this
- * turn). Idle path: `switched`, `unsupported_model`, or `no_active_turn`.
+ * `control_result`. Busy: `sent` (provisional) or `turn_ending`. Idle: `switched`,
+ * `unsupported_model`, `no_active_turn`. `failure` (adapter rejected) lands late.
  */
 export type SwitchManagedAgentModelStatus =
   | "sent"
   | "turn_ending"
   | "switched"
   | "unsupported_model"
-  | "no_active_turn";
+  | "no_active_turn"
+  | "failure";
 
 export type ControlResultFrame = {
   type: "cancel_turn" | "switch_model";
