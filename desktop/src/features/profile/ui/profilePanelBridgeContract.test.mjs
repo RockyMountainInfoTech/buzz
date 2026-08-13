@@ -20,9 +20,21 @@ import test from "node:test";
  * gates in that same path stay archived-aware, so this also pins them: the
  * `showRuntimeTab` gate (ProfileSummaryView) that decides whether the Runtime
  * tab renders, and the `hasInstances` gate (ProfileRuntimeTabContent) that
- * decides whether ProfileInstancesSection renders. Dropping the
- * `archivedInstances.length > 0` clause from either strands an all-archived
- * persona, and that mutation fails here.
+ * decides whether ProfileInstancesSection renders. For an all-archived persona
+ * `archivedInstances.length > 0` is the ONLY true operand of each gate, so it
+ * must survive as a whole `||` operand. The behavioral mount both this and
+ * Thufir preferred is not reachable from a test-file-only change: importing
+ * either gate's module transitively loads AgentSessionTranscriptList, which
+ * reads `import.meta.env.VITE_SHOW_TRANSCRIPT_ACP_SOURCE` at module-evaluation
+ * time and throws under the node test harness (no `import.meta.env`); shimming
+ * it would require editing the shared loader or that component, outside this
+ * change's boundary. So the two gates are pinned by parsing each initializer
+ * rather than matching text: comments are stripped, the named initializer is
+ * extracted, and `archivedInstances.length > 0` must appear as one whole
+ * operand of its `||` chain. An operator swap (`||` -> `&&`) folds it into a
+ * conjunction so it is no longer a standalone operand, and a commented-out or
+ * deleted clause is gone entirely — every such mutation fails here, unlike a
+ * substring match.
  *
  * Coverage boundary: six prop handoffs (two buckets x three hops) + these two
  * visibility gates. ProfileInstancesSection is the terminal consumer and is
@@ -37,9 +49,54 @@ const collapse = (source) => source.replace(/\s+/g, " ");
 const readCollapsed = async (name) =>
   collapse(await readFile(new URL(`./${name}`, import.meta.url), "utf8"));
 
+const readRaw = async (name) =>
+  readFile(new URL(`./${name}`, import.meta.url), "utf8");
+
+// Strip comments before any whitespace handling: the collapsed single-line
+// form would let a `//` line comment swallow live code, and a mutation that
+// hides the archived clause in a comment must not count as present.
+const stripComments = (source) =>
+  source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+
+// Extract the RHS of `const <name> = ...;` from comment-free source, so the
+// semicolon that terminates the initializer cannot be hidden behind a comment.
+const initializerOf = (source, name) => {
+  const declaration = `const ${name} =`;
+  const start = source.indexOf(declaration);
+  assert.notEqual(start, -1, `${name} declaration not found`);
+  const rest = stripComments(source.slice(start + declaration.length));
+  const end = rest.indexOf(";");
+  assert.notEqual(end, -1, `${name} initializer has no terminator`);
+  return rest.slice(0, end);
+};
+
+// True when the archived clause is one whole operand of the initializer's `||`
+// chain — not merely a substring. Each `||` operand is normalised before
+// comparison: drop any leading guard-and-open-paren prefix (the disjunction may
+// sit inside `guard && guard && ( ... )`, which otherwise glues onto the first
+// operand), strip whitespace, then drop the trailing `)` that closes the group.
+// A `||`->`&&` swap leaves the archived text welded to a neighbour by `&&` in
+// one operand, so no operand equals the clause alone; a deleted or
+// commented-out clause is gone entirely. Legitimate reordering keeps the clause
+// a standalone operand anywhere in the chain, so it still matches.
+const normalizeOperand = (operand) =>
+  operand
+    .slice(operand.lastIndexOf("(") + 1)
+    .replace(/\s+/g, "")
+    .replace(/\)+$/, "");
+
+const isArchivedAwareDisjunct = (initializer) =>
+  initializer
+    .split("||")
+    .map(normalizeOperand)
+    .includes("archivedInstances.length>0");
+
 const panelSource = await readCollapsed("UserProfilePanel.tsx");
 const sectionsSource = await readCollapsed("UserProfilePanelSections.tsx");
 const tabsSource = await readCollapsed("UserProfilePanelTabs.tsx");
+
+const sectionsRaw = await readRaw("UserProfilePanelSections.tsx");
+const tabsRaw = await readRaw("UserProfilePanelTabs.tsx");
 
 test("panel resolves profile state through the single composition function", () => {
   assert.match(
@@ -64,16 +121,12 @@ test("hop 3: ProfileRuntimeTabContent forwards both props to ProfileInstancesSec
   assert.match(tabsSource, /archivedInstances=\{archivedInstances\}/);
 });
 
-test("gate: showRuntimeTab keeps the archived bucket in its enablement", () => {
-  assert.match(
-    sectionsSource,
-    /showRuntimeTab = [^;]*archivedInstances\.length > 0/,
+test("gate: showRuntimeTab keeps the archived bucket as a whole || operand", () => {
+  assert.ok(
+    isArchivedAwareDisjunct(initializerOf(sectionsRaw, "showRuntimeTab")),
   );
 });
 
-test("gate: hasInstances keeps the archived bucket in its enablement", () => {
-  assert.match(
-    tabsSource,
-    /hasInstances = instances\.length > 0 \|\| archivedInstances\.length > 0;/,
-  );
+test("gate: hasInstances keeps the archived bucket as a whole || operand", () => {
+  assert.ok(isArchivedAwareDisjunct(initializerOf(tabsRaw, "hasInstances")));
 });
