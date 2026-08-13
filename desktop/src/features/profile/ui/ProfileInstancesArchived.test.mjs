@@ -6,8 +6,12 @@
  * exist, self-omits when neither does, and — for an all-archived persona —
  * shows only the Archived subsection.
  *
- * Mounts the shipping ProfileRuntimeTabContent (which owns the Instances
+ * Mounts the shipping ProfileInstancesSection (which owns the Instances
  * section) rather than a reimplementation, and drives the real expand toggle.
+ * The final test composes the real UserProfilePanel resolver call shape
+ * (resolveProfileManagedAgent → resolvePersonaInstances) to prove an
+ * all-archived persona reaches the Archived subsection through the actual
+ * production seam, not hand-bucketed props.
  */
 
 import assert from "node:assert/strict";
@@ -25,6 +29,8 @@ let render;
 let screen;
 let createElement;
 let ProfileInstancesSection;
+let resolveProfileManagedAgent;
+let resolvePersonaInstances;
 
 const LIVE_PK = "b".repeat(64);
 const SECOND_LIVE_PK = "c".repeat(64);
@@ -77,6 +83,9 @@ before(async () => {
   ));
   ({ createElement } = await import("react"));
   ({ ProfileInstancesSection } = await import("./ProfileInstancesSection.tsx"));
+  ({ resolveProfileManagedAgent, resolvePersonaInstances } = await import(
+    "./UserProfilePanelUtils.ts"
+  ));
 });
 
 afterEach(() => cleanup?.());
@@ -144,5 +153,51 @@ test("test_archived_row_click_opens_that_explicit_pubkey", () => {
   fireEvent.click(screen.getByTestId(`user-profile-instance-${ARCHIVED_PK}`));
 
   // The archived row keeps the deliberate explicit-pubkey path (unarchive).
+  assert.deepEqual(opened, [ARCHIVED_PK]);
+});
+
+test("test_all_archived_persona_reaches_archived_subsection_through_production_seam", () => {
+  // Compose the exact UserProfilePanel resolver call shape rather than
+  // hand-bucketing props: an all-archived persona's primary managedAgent
+  // resolves undefined, yet the persona ID still keys the instances buckets.
+  const first = agent({ pubkey: ARCHIVED_PK, name: "Archived one" });
+  const second = agent({ pubkey: LIVE_PK, name: "Archived two" });
+  const agents = [first, second];
+  const persona = { id: "persona-1" };
+  const isArchived = (pubkey) => pubkey === ARCHIVED_PK || pubkey === LIVE_PK;
+
+  const managedAgent = resolveProfileManagedAgent(
+    agents,
+    { persona },
+    isArchived,
+  );
+  assert.equal(managedAgent, undefined);
+
+  const { live, archived } = resolvePersonaInstances(
+    persona.id ?? managedAgent?.personaId,
+    managedAgent,
+    agents,
+    isArchived,
+  );
+  assert.deepEqual(live, []);
+  assert.deepEqual(archived, [first, second]);
+
+  const opened = [];
+  renderRuntime({
+    instances: live,
+    archivedInstances: archived,
+    onOpenInstance: (pubkey) => opened.push(pubkey),
+  });
+  fireEvent.click(screen.getByTestId("user-profile-instances"));
+
+  assert.equal(
+    screen.getByTestId("user-profile-instances").textContent,
+    "2 instances",
+  );
+  assert.ok(screen.getByTestId("user-profile-instances-archived-header"));
+  assert.ok(screen.getByTestId(`user-profile-instance-${ARCHIVED_PK}`));
+  assert.ok(screen.getByTestId(`user-profile-instance-${LIVE_PK}`));
+
+  fireEvent.click(screen.getByTestId(`user-profile-instance-${ARCHIVED_PK}`));
   assert.deepEqual(opened, [ARCHIVED_PK]);
 });

@@ -198,10 +198,10 @@ export function UserProfilePanel({
       ),
     [managedAgents, persona, pubkey, isArchived],
   );
-  const personaInstances = React.useMemo(
-    () => resolvePersonaInstances(managedAgent, managedAgents, isArchived),
-    [managedAgent, managedAgents, isArchived],
-  );
+  const personaInstances = React.useMemo(() => {
+    const id = persona?.id ?? managedAgent?.personaId;
+    return resolvePersonaInstances(id, managedAgent, managedAgents, isArchived);
+  }, [persona?.id, managedAgent, managedAgents, isArchived]);
   const resolvedPersonaFromSource = React.useMemo(() => {
     const personaId = persona?.id ?? managedAgent?.personaId;
     if (personaId) {

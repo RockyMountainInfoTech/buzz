@@ -314,6 +314,7 @@ test("resolvePersonaInstances_splits_live_and_archived_siblings", () => {
   const anotherLive = agent({ pubkey: secondLivePk });
   assert.deepEqual(
     resolvePersonaInstances(
+      "persona-1",
       archived,
       [archived, live, anotherLive],
       isArchivedIn(archivedPk),
@@ -325,11 +326,13 @@ test("resolvePersonaInstances_splits_live_and_archived_siblings", () => {
 test("resolvePersonaInstances_all_archived_surfaces_archived_bucket_only", () => {
   const first = agent({ pubkey: archivedPk });
   const second = agent({ pubkey: livePk });
-  // Every sibling archived: the live list is empty and the Archived subsection
-  // carries every row so unarchive stays UI-reachable.
+  // Every sibling archived: production resolves the primary managedAgent to
+  // `undefined`, but the persona ID still keys the buckets, so the live list is
+  // empty and the Archived subsection carries every row for unarchive.
   assert.deepEqual(
     resolvePersonaInstances(
-      first,
+      "persona-1",
+      undefined,
       [first, second],
       isArchivedIn(archivedPk, livePk),
     ),
@@ -341,17 +344,20 @@ test("resolvePersonaInstances_unknown_archive_state_shows_all_rows", () => {
   const first = agent({ pubkey: archivedPk });
   const second = agent({ pubkey: livePk });
   assert.deepEqual(
-    resolvePersonaInstances(first, [first, second], neverArchived),
+    resolvePersonaInstances("persona-1", first, [first, second], neverArchived),
     { live: [first, second], archived: [] },
   );
 });
 
 test("resolvePersonaInstances_agent_without_persona_returns_only_itself", () => {
   const solo = agent({ pubkey: livePk, personaId: null });
-  assert.deepEqual(resolvePersonaInstances(solo, [solo], neverArchived), {
-    live: [solo],
-    archived: [],
-  });
+  assert.deepEqual(
+    resolvePersonaInstances(undefined, solo, [solo], neverArchived),
+    {
+      live: [solo],
+      archived: [],
+    },
+  );
 });
 
 // ── Finding 4: loading→hydrated seam ────────────────────────────────────────

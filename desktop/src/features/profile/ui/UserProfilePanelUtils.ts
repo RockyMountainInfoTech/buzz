@@ -193,23 +193,31 @@ export function resolveProfileManagedAgent(
  * Instances shown for a persona, split into live and relay-archived buckets.
  * `live` drives the primary Instances list; `archived` renders below a labeled
  * "Archived" subsection so unarchive stays UI-reachable for channel-less agents
- * without archived identities ever surfacing as an accidental nav target. A
- * persona-less agent has no siblings, so it returns only itself as `live`.
+ * without archived identities ever surfacing as an accidental nav target.
+ *
+ * `personaId` is the grouping key and is deliberately independent of the
+ * primary-instance selection: an all-archived persona still resolves its
+ * `personaId` (from the `persona` prop) even though its primary `managedAgent`
+ * is `undefined`, so its archived siblings still populate the bucket. When
+ * `personaId` is absent (a persona-less agent opened by pubkey), the resolver
+ * falls back to `managedAgent` and returns only itself as `live`.
+ *
  * `isArchived` is fail-open: while the snapshot loads every sibling counts as
  * live, matching pre-filter behaviour.
  */
 export function resolvePersonaInstances(
+  personaId: string | null | undefined,
   managedAgent: ManagedAgent | undefined,
   agents: readonly ManagedAgent[],
   isArchived: (pubkey: string) => boolean,
 ): { live: ManagedAgent[]; archived: ManagedAgent[] } {
-  if (!managedAgent?.personaId) {
+  if (!personaId) {
     return { live: managedAgent ? [managedAgent] : [], archived: [] };
   }
   const live: ManagedAgent[] = [];
   const archived: ManagedAgent[] = [];
   for (const agent of agents) {
-    if (agent.personaId !== managedAgent.personaId) continue;
+    if (agent.personaId !== personaId) continue;
     (isArchived(agent.pubkey) ? archived : live).push(agent);
   }
   return { live, archived };
