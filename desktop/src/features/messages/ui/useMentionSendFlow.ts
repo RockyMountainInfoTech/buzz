@@ -27,7 +27,6 @@ import type { UseEmojiAutocompleteResult } from "@/features/messages/lib/useEmoj
 import {
   buildOutgoingMessage,
   type ImetaMedia,
-  mergeOutgoingTags,
 } from "@/features/messages/lib/imetaMediaMarkdown";
 import type { UseMentionsResult } from "@/features/messages/lib/useMentions";
 import type { UseRichTextEditorResult } from "@/features/messages/lib/useRichTextEditor";
@@ -45,6 +44,7 @@ import {
   mergeOutgoingTagsWithReferenceMentions,
   type PendingNonMemberMentionSend,
   type SendMessageWithMentionFlowInput,
+  resolvePreviewTags,
   uniqueNormalizedPubkeys,
 } from "./useMentionSendFlow.helpers";
 type UseMentionSendFlowOptions = {
@@ -125,8 +125,6 @@ export function useMentionSendFlow({
   const isCompleteSendPendingRef = React.useRef(false);
   const isMountedRef = React.useRef(false);
   const previousChannelIdRef = React.useRef(channelId);
-  // Tracks the live channel so completeSend can ask "is the user still here?"
-  // without being frozen to the compose-time closure.
   const channelIdRef = React.useRef(channelId);
   channelIdRef.current = channelId;
   React.useEffect(() => {
@@ -554,11 +552,12 @@ export function useMentionSendFlow({
               ),
             ]),
           );
-          const finalOutgoingTags = mergeOutgoingTags(mediaTags, [
-            ...(outgoingTags ?? []),
-            ...((await draft.preparedLinkPreviews?.promise) ?? []),
-          ]);
-          if (signal?.aborted) return;
+          const finalOutgoingTags = await resolvePreviewTags(
+            draft,
+            mediaTags,
+            outgoingTags,
+          );
+          if (!finalOutgoingTags || signal?.aborted) return;
           await send(
             finalContent,
             mentionPubkeys,

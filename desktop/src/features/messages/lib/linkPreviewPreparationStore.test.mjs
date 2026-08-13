@@ -5,6 +5,7 @@ import {
   __linkPreviewPreparationTest,
   prepareBackgroundLinkPreviews,
   prepareLinkPreview,
+  resetLinkPreviewPreparations,
 } from "./linkPreviewPreparationStore.ts";
 
 const first = { href: "https://example.com/first" };
@@ -101,7 +102,10 @@ test("keeps successful sibling tags when another URL fails", async () => {
   assert.ok(preparation);
   pending.resolve(null);
 
-  assert.deepEqual(await preparation.promise, [firstTag]);
+  assert.deepEqual(await preparation.promise, {
+    status: "ready",
+    tags: [firstTag],
+  });
 });
 
 test("total deadline keeps full and fallback sibling tags", async () => {
@@ -112,12 +116,18 @@ test("total deadline keeps full and fallback sibling tags", async () => {
 
   const preparation = prepareBackgroundLinkPreviews([first, second], 0);
   assert.ok(preparation);
-  assert.deepEqual(await preparation.promise, [firstTag, fallbackTag]);
+  assert.deepEqual(await preparation.promise, {
+    status: "ready",
+    tags: [firstTag, fallbackTag],
+  });
 
   const lateTag = ["link-preview", "snapshot", second.href, "image"];
   pending.resolve(lateTag);
   await pending.promise;
-  assert.deepEqual(await preparation.promise, [firstTag, fallbackTag]);
+  assert.deepEqual(await preparation.promise, {
+    status: "ready",
+    tags: [firstTag, fallbackTag],
+  });
 });
 
 test("timeout keeps metadata-only fallback and ignores late upload completion", async () => {
@@ -139,11 +149,17 @@ test("timeout keeps metadata-only fallback and ignores late upload completion", 
 
   const preparation = prepareBackgroundLinkPreviews([first], 0);
   assert.ok(preparation);
-  assert.deepEqual(await preparation.promise, [fallbackTag]);
+  assert.deepEqual(await preparation.promise, {
+    status: "ready",
+    tags: [fallbackTag],
+  });
 
   pending.resolve(firstTag);
   await pending.promise;
-  assert.deepEqual(await preparation.promise, [fallbackTag]);
+  assert.deepEqual(await preparation.promise, {
+    status: "ready",
+    tags: [fallbackTag],
+  });
 });
 
 test("Skip wins completion and resolves exactly once", async () => {
@@ -155,7 +171,7 @@ test("Skip wins completion and resolves exactly once", async () => {
   preparation.skip();
   pending.resolve(firstTag);
 
-  assert.deepEqual(await preparation.promise, []);
+  assert.deepEqual(await preparation.promise, { status: "ready", tags: [] });
 });
 
 test("Skip after completion cannot replace finalized tags", async () => {
@@ -165,10 +181,16 @@ test("Skip after completion cannot replace finalized tags", async () => {
   const preparation = prepareBackgroundLinkPreviews([first], 1_000);
   assert.ok(preparation);
   pending.resolve(firstTag);
-  assert.deepEqual(await preparation.promise, [firstTag]);
+  assert.deepEqual(await preparation.promise, {
+    status: "ready",
+    tags: [firstTag],
+  });
 
   preparation.skip();
-  assert.deepEqual(await preparation.promise, [firstTag]);
+  assert.deepEqual(await preparation.promise, {
+    status: "ready",
+    tags: [firstTag],
+  });
 });
 
 test("already-settled partial results contain only successful tags", async () => {
@@ -177,5 +199,20 @@ test("already-settled partial results contain only successful tags", async () =>
 
   const preparation = prepareBackgroundLinkPreviews([first, second]);
   assert.ok(preparation);
-  assert.deepEqual(await preparation.promise, [firstTag]);
+  assert.deepEqual(await preparation.promise, {
+    status: "ready",
+    tags: [firstTag],
+  });
+});
+
+test("reset cancels pending preparations instead of authorizing send", async () => {
+  const pending = deferred();
+  seed(first, pending.promise);
+
+  const preparation = prepareBackgroundLinkPreviews([first], 1_000);
+  assert.ok(preparation);
+  resetLinkPreviewPreparations();
+  pending.resolve(firstTag);
+
+  assert.deepEqual(await preparation.promise, { status: "cancelled" });
 });
