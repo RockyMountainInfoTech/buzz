@@ -273,7 +273,7 @@ function buildDecorations(
       pos,
       mentionPatterns,
       `${MENTION_CHIP_BASE_CLASSES} ${inlineChipIconClasses("human")}`,
-      { hideMentionPrefix: true },
+      { hidePrefix: true },
     );
     addMatchesForPatterns(
       decorations,
@@ -281,14 +281,15 @@ function buildDecorations(
       pos,
       agentMentionPatterns,
       `${MENTION_CHIP_BASE_CLASSES} ${inlineChipIconClasses("agent")}`,
-      { hideMentionPrefix: true },
+      { hidePrefix: true },
     );
     addMatchesForPatterns(
       decorations,
       node.text,
       pos,
       channelPatterns,
-      "mention-chip",
+      `${MENTION_CHIP_BASE_CLASSES} ${inlineChipIconClasses("channel")}`,
+      { hidePrefix: true },
     );
   });
 
@@ -301,7 +302,7 @@ function addMatchesForPatterns(
   position: number,
   patterns: RegExp[],
   className: string,
-  options?: { hideMentionPrefix?: boolean },
+  options?: { hidePrefix?: boolean },
 ) {
   for (const pattern of patterns) {
     pattern.lastIndex = 0;
@@ -309,7 +310,7 @@ function addMatchesForPatterns(
     while (match !== null) {
       const from = position + match.index;
       const to = from + match[0].length;
-      if (options?.hideMentionPrefix && match[0].startsWith("@")) {
+      if (options?.hidePrefix && /^[@#]/.test(match[0])) {
         decorations.push(
           Decoration.inline(from, from + 1, {
             class: "mention-prefix-hidden",

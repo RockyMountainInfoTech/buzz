@@ -375,6 +375,16 @@ test("mixed Buzz permalinks render as chips in the composer", async ({
   await expect(chips.nth(1)).toHaveClass(/inline-chip-icon-channel/);
   await expect(chips.nth(2)).toHaveClass(/inline-chip-icon-repo/);
   await expect(chips.nth(3)).toHaveClass(/inline-chip-icon-issue/);
+  for (const index of [0, 1, 2, 3]) {
+    const iconMask = await chips
+      .nth(index)
+      .evaluate((element) =>
+        getComputedStyle(element, "::before").getPropertyValue(
+          "-webkit-mask-image",
+        ),
+      );
+    expect(iconMask).toContain("data:image/svg+xml");
+  }
   await expect(composerInput).not.toContainText("buzz://");
 });
 
