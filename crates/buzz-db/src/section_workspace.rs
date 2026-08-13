@@ -1205,13 +1205,9 @@ mod tests {
         let database_url = std::env::var("BUZZ_TEST_DATABASE_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .unwrap_or_else(|_| TEST_DB_URL.to_owned());
-        let pool = PgPool::connect(&database_url)
+        PgPool::connect(&database_url)
             .await
-            .expect("connect to test database");
-        crate::migration::run_migrations(&pool)
-            .await
-            .expect("apply migrations");
-        pool
+            .expect("connect to test database")
     }
 
     async fn make_community(pool: &PgPool) -> CommunityId {
