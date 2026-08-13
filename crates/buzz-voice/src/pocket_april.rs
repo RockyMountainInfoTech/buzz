@@ -36,6 +36,13 @@ const DECODER_CHUNK_FRAMES: usize = 12;
 const TOKENS_PER_SECOND_ESTIMATE: f32 = 3.0;
 const GENERATION_SECONDS_PADDING: f32 = 2.0;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextBoundary {
+    Sentence,
+    Clause,
+    Word,
+}
+
 #[derive(Debug, Deserialize)]
 struct Bundle {
     schema_version: u32,
@@ -367,62 +374,23 @@ impl AprilPocketTts {
         &self,
         prepared: &AprilPreparedPrompt,
     ) -> Result<Vec<String>, String> {
-        if self.token_count(&prepared.text)? <= self.bundle.max_token_per_chunk {
+        if self.prepared_token_count(&prepared.text)? <= self.bundle.max_token_per_chunk {
             return Ok(vec![prepared.text.clone()]);
         }
+        split_model_at_natural_boundaries(&prepared.text, self.bundle.max_token_per_chunk, |text| {
+            self.prepared_token_count(text)
+        })
+    }
 
-        let mut chunks = Vec::new();
-        let mut current = String::new();
-        for word in prepared.text.split_whitespace() {
-            let candidate = if current.is_empty() {
-                word.to_string()
-            } else {
-                format!("{current} {word}")
-            };
-            if self.prepared_token_count(&candidate)? <= self.bundle.max_token_per_chunk {
-                current = candidate;
-                continue;
-            }
-            if !current.is_empty() {
-                chunks.push(std::mem::take(&mut current));
-            }
-
-            if self.prepared_token_count(word)? <= self.bundle.max_token_per_chunk {
-                current = word.to_string();
-                continue;
-            }
-
-            let mut fragment = String::new();
-            for ch in word.chars() {
-                let candidate = format!("{fragment}{ch}");
-                if !fragment.is_empty()
-                    && self.prepared_token_count(&candidate)? > self.bundle.max_token_per_chunk
-                {
-                    chunks.push(std::mem::take(&mut fragment));
-                }
-                fragment.push(ch);
-            }
-            current = fragment;
-        }
-        if !current.is_empty() {
-            chunks.push(current);
-        }
-
-        chunks
-            .into_iter()
-            .map(|text| {
-                let chunk = prepare_april_prompt(&text)
-                    .ok_or_else(|| "Pocket TTS prompt chunk became empty".to_string())?;
-                let token_count = self.token_count(&chunk.text)?;
-                if token_count > self.bundle.max_token_per_chunk {
-                    return Err(format!(
-                        "Pocket TTS prompt chunk has {token_count} tokens; maximum is {}",
-                        self.bundle.max_token_per_chunk
-                    ));
-                }
-                Ok(chunk.text)
-            })
-            .collect()
+    pub(crate) fn split_playback_prompt(
+        &self,
+        prepared: &AprilPreparedPrompt,
+    ) -> Result<Vec<String>, String> {
+        split_playback_at_natural_boundaries(
+            &prepared.text,
+            self.bundle.max_token_per_chunk,
+            |text| self.prepared_token_count(text),
+        )
     }
 
     pub(crate) fn synth_chunk(
@@ -990,6 +958,180 @@ impl AprilPocketTts {
     }
 }
 
+fn split_model_at_natural_boundaries<F>(
+    text: &str,
+    max_tokens: usize,
+    token_count: F,
+) -> Result<Vec<String>, String>
+where
+    F: FnMut(&str) -> Result<usize, String>,
+{
+    split_at_natural_boundaries(text, max_tokens, false, token_count)
+}
+
+fn split_playback_at_natural_boundaries<F>(
+    text: &str,
+    max_tokens: usize,
+    token_count: F,
+) -> Result<Vec<String>, String>
+where
+    F: FnMut(&str) -> Result<usize, String>,
+{
+    split_at_natural_boundaries(text, max_tokens, true, token_count)
+}
+
+fn split_at_natural_boundaries<F>(
+    text: &str,
+    max_tokens: usize,
+    isolate_first_sentence: bool,
+    mut token_count: F,
+) -> Result<Vec<String>, String>
+where
+    F: FnMut(&str) -> Result<usize, String>,
+{
+    if text.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < text.len() {
+        while text[start..]
+            .chars()
+            .next()
+            .is_some_and(char::is_whitespace)
+        {
+            start += text[start..]
+                .chars()
+                .next()
+                .expect("checked above")
+                .len_utf8();
+        }
+        if start == text.len() {
+            break;
+        }
+
+        let mut first_sentence_end = None;
+        let mut sentence_end = None;
+        let mut clause_end = None;
+        let mut word_end = None;
+        for (offset, ch) in text[start..].char_indices() {
+            let end = start + offset + ch.len_utf8();
+            let at_word_end =
+                end == text.len() || text[end..].chars().next().is_some_and(char::is_whitespace);
+            let at_clause_end = matches!(ch, '—' | '–')
+                && !text[end..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_closing_punctuation);
+            if !at_word_end && !at_clause_end {
+                continue;
+            }
+            // Prepared token counts are monotonic in prefix length, so once a
+            // candidate overflows the limit no longer candidate can fit. Stop
+            // scanning instead of tokenizing every remaining boundary: that
+            // kept this loop superlinear in prompt length, and the cost landed
+            // before the first chunk reached synthesis.
+            if token_count(&text[start..end])? > max_tokens {
+                break;
+            }
+
+            word_end = Some(end);
+            match natural_boundary(&text[start..end], end == text.len()) {
+                TextBoundary::Sentence => {
+                    first_sentence_end.get_or_insert(end);
+                    sentence_end = Some(end);
+                }
+                TextBoundary::Clause => clause_end = Some(end),
+                TextBoundary::Word => {}
+            }
+        }
+
+        let preferred_end = if isolate_first_sentence && chunks.is_empty() {
+            first_sentence_end.or(clause_end).or(word_end)
+        } else {
+            sentence_end.or(clause_end).or(word_end)
+        };
+        let end = if let Some(end) = preferred_end {
+            end
+        } else {
+            // A single word can itself exceed the model limit. Preserve a
+            // scalar boundary as the final safety case without losing UTF-8.
+            let mut scalar_end = None;
+            for (offset, ch) in text[start..].char_indices() {
+                if ch.is_whitespace() {
+                    break;
+                }
+                let end = start + offset + ch.len_utf8();
+                if token_count(&text[start..end])? <= max_tokens {
+                    scalar_end = Some(end);
+                }
+            }
+            scalar_end.ok_or_else(|| {
+                format!(
+                    "Pocket TTS prompt cannot fit one character within the {max_tokens}-token limit"
+                )
+            })?
+        };
+
+        let mut next_start = end;
+        while text[next_start..]
+            .chars()
+            .next()
+            .is_some_and(char::is_whitespace)
+        {
+            next_start += text[next_start..]
+                .chars()
+                .next()
+                .expect("checked above")
+                .len_utf8();
+        }
+        chunks.push(text[start..next_start].to_string());
+        start = next_start;
+    }
+
+    debug_assert_eq!(chunks.concat(), text);
+    Ok(chunks)
+}
+
+fn natural_boundary(candidate: &str, is_end_of_text: bool) -> TextBoundary {
+    if is_end_of_text {
+        return TextBoundary::Sentence;
+    }
+
+    let mut chars = candidate.chars().rev();
+    let mut last = chars.next();
+    while last.is_some_and(is_closing_punctuation) {
+        last = chars.next();
+    }
+    match last {
+        Some('.' | '!' | '?') if !looks_like_abbreviation(candidate) => TextBoundary::Sentence,
+        Some(',' | ';' | ':' | '—' | '–') => TextBoundary::Clause,
+        _ => TextBoundary::Word,
+    }
+}
+
+fn is_closing_punctuation(ch: char) -> bool {
+    matches!(ch, '"' | '\'' | '”' | '’' | ')' | ']' | '}')
+}
+
+fn looks_like_abbreviation(candidate: &str) -> bool {
+    const ABBREVIATIONS: &[&str] = &[
+        "Dr.", "Mr.", "Mrs.", "Ms.", "Prof.", "Sr.", "Jr.", "St.", "Ave.", "Rd.", "Blvd.", "Dept.",
+        "Inc.", "Ltd.", "Co.", "Corp.", "etc.", "vs.", "i.e.", "e.g.", "Ph.D.",
+    ];
+
+    let candidate = candidate.trim_end_matches(is_closing_punctuation);
+    let last_word = candidate
+        .rsplit_once(char::is_whitespace)
+        .map_or(candidate, |(_, word)| word);
+    ABBREVIATIONS.contains(&last_word)
+        || (last_word.ends_with('.')
+            && last_word[..last_word.len() - 1]
+                .chars()
+                .all(|ch| ch.is_ascii_digit()))
+}
+
 fn load_session(path: PathBuf, num_threads: usize) -> Result<Session, String> {
     if !path.is_file() {
         return Err(format!("missing Pocket TTS file: {}", path.display()));
@@ -1211,6 +1353,215 @@ mod tests {
     fn shape_len_supports_empty_state_dimensions() {
         assert_eq!(shape_len(&[1, 128, 0]).expect("shape"), 0);
         assert_eq!(shape_len(&[2, 1, 8, 1000, 64]).expect("shape"), 1_024_000);
+    }
+
+    /// The two engine splitters must keep OPPOSITE isolation polarity.
+    ///
+    /// The guards in `pocket.rs` pin which engine method each public API calls,
+    /// but they cannot see what the method itself does: pointing
+    /// `split_playback_prompt` at the model wrapper leaves every call site's
+    /// source text untouched while first-sentence isolation silently stops
+    /// happening, so the first playback unit becomes the whole utterance and
+    /// first audio waits on generating all of it.
+    #[test]
+    fn engine_splitters_keep_opposite_isolation_polarity() {
+        let source = include_str!("pocket_april.rs");
+        let production = source
+            .split_once("\n#[cfg(test)]")
+            .map_or(source, |(production, _)| production);
+
+        // A method's own code, and nothing else. Ending at the method's own
+        // closing brace keeps the NEXT method's doc comment out, and stripping
+        // `//` to end of line keeps prose out: neither can call a splitter, so
+        // scanning either reports drift in a method that has not changed.
+        let method_code = |name: &str| -> String {
+            let (_, body) = production
+                .split_once(name)
+                .unwrap_or_else(|| panic!("{name} exists"));
+            let (body, _) = body
+                .split_once("\n    }\n")
+                .unwrap_or_else(|| panic!("{name} has a closing brace"));
+            body.lines()
+                .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let model = method_code("fn split_prompt");
+        let model = model.as_str();
+        let playback = method_code("fn split_playback_prompt");
+        let playback = playback.as_str();
+
+        assert_eq!(
+            (
+                model.matches("split_model_at_natural_boundaries(").count(),
+                model
+                    .matches("split_playback_at_natural_boundaries(")
+                    .count(),
+            ),
+            (1, 0),
+            "split_prompt must pack sentences: isolating here peels sentence \
+             one off every already-packed unit"
+        );
+        assert_eq!(
+            (
+                playback
+                    .matches("split_playback_at_natural_boundaries(")
+                    .count(),
+                playback
+                    .matches("split_model_at_natural_boundaries(")
+                    .count(),
+            ),
+            (1, 0),
+            "split_playback_prompt must isolate sentence one: packing here \
+             makes the first playback unit the whole utterance and delays \
+             first audio by the full generation"
+        );
+
+        // Calling the isolating splitter is necessary but not sufficient: a
+        // short circuit before the call can return the whole utterance as one
+        // unit while leaving the delegated splitter unchanged. Playback must
+        // delegate unconditionally so sentence one remains the first unit.
+        for control_flow in ["if ", "match ", "else", "return"] {
+            assert!(
+                !playback.contains(control_flow),
+                "split_playback_prompt must delegate unconditionally, found \
+                 `{control_flow}`: a branch before the split can return the \
+                 whole utterance as the first playback unit, delaying first \
+                 audio by the full generation"
+            );
+        }
+    }
+
+    fn whitespace_token_count(text: &str) -> Result<usize, String> {
+        Ok(text.split_whitespace().count())
+    }
+
+    #[test]
+    fn playback_split_keeps_first_sentence_separate_then_packs_the_remainder() {
+        let text = "One two. Three four. Five six.";
+        let chunks = split_playback_at_natural_boundaries(text, 4, whitespace_token_count).unwrap();
+        assert_eq!(chunks, ["One two. ", "Three four. Five six."]);
+        assert_eq!(chunks.concat(), text);
+    }
+
+    #[test]
+    fn model_split_packs_multiple_sentences_within_limit() {
+        let text = "One two. Three four. Five six.";
+        let chunks = split_model_at_natural_boundaries(text, 4, whitespace_token_count).unwrap();
+        assert_eq!(chunks, ["One two. Three four. ", "Five six."]);
+        assert_eq!(chunks.concat(), text);
+    }
+
+    #[test]
+    fn playback_then_model_split_does_not_isolate_later_sentences_again() {
+        let text = "Alpha one. Beta two. Gamma three.";
+        let playback =
+            split_playback_at_natural_boundaries(text, 50, whitespace_token_count).unwrap();
+        assert_eq!(playback, ["Alpha one. ", "Beta two. Gamma three."]);
+
+        let model: Vec<_> = playback
+            .iter()
+            .flat_map(|chunk| {
+                split_model_at_natural_boundaries(chunk.trim(), 50, whitespace_token_count).unwrap()
+            })
+            .collect();
+        assert_eq!(model, ["Alpha one.", "Beta two. Gamma three."]);
+    }
+
+    #[test]
+    fn natural_split_prefers_preceding_sentence_boundary() {
+        let text = "One two. Three four five six.";
+        let chunks = split_at_natural_boundaries(text, 5, true, whitespace_token_count).unwrap();
+        assert_eq!(chunks, ["One two. ", "Three four five six."]);
+        assert_eq!(chunks.concat(), text);
+    }
+
+    #[test]
+    fn oversized_sentence_uses_clause_then_word_fallback() {
+        let clause_text = "One two three, four five six seven.";
+        let clause_chunks =
+            split_at_natural_boundaries(clause_text, 5, true, whitespace_token_count).unwrap();
+        assert_eq!(clause_chunks, ["One two three, ", "four five six seven."]);
+        assert_eq!(clause_chunks.concat(), clause_text);
+
+        let word_text = "One two three four five six.";
+        let word_chunks =
+            split_at_natural_boundaries(word_text, 4, true, whitespace_token_count).unwrap();
+        assert_eq!(word_chunks, ["One two three four ", "five six."]);
+        assert_eq!(word_chunks.concat(), word_text);
+    }
+
+    #[test]
+    fn natural_split_preserves_unicode_punctuation_and_abbreviations() {
+        let text = "“Café naïve?” Maybe—yes, definitely; 東京 speaks.";
+        let chunks = split_at_natural_boundaries(text, 3, true, whitespace_token_count).unwrap();
+        assert_eq!(
+            chunks,
+            ["“Café naïve?” ", "Maybe—yes, definitely; ", "東京 speaks."]
+        );
+        assert_eq!(chunks.concat(), text);
+
+        let abbreviation = "Dr. Smith waits. Then leaves.";
+        let chunks =
+            split_at_natural_boundaries(abbreviation, 3, true, whitespace_token_count).unwrap();
+        assert_eq!(chunks, ["Dr. Smith waits. ", "Then leaves."]);
+        assert_eq!(chunks.concat(), abbreviation);
+
+        let unspaced_clause = "alpha beta—gamma delta";
+        let chunks =
+            split_at_natural_boundaries(unspaced_clause, 2, true, whitespace_token_count).unwrap();
+        assert_eq!(chunks, ["alpha beta—", "gamma delta"]);
+        assert_eq!(chunks.concat(), unspaced_clause);
+    }
+
+    #[test]
+    fn natural_split_does_not_treat_numeric_punctuation_as_unspaced_clauses() {
+        let text = "Meet at 12:30 with 1,000 guests onward.";
+        let chunks = split_at_natural_boundaries(text, 3, true, whitespace_token_count).unwrap();
+        assert_eq!(chunks, ["Meet at 12:30 ", "with 1,000 guests ", "onward."]);
+        assert_eq!(chunks.concat(), text);
+    }
+
+    #[test]
+    fn oversized_word_uses_utf8_scalar_boundary_without_loss() {
+        let text = "éééé";
+        let chunks =
+            split_at_natural_boundaries(text, 3, true, |chunk| Ok(chunk.chars().count())).unwrap();
+        assert_eq!(chunks, ["ééé", "é"]);
+        assert_eq!(chunks.concat(), text);
+    }
+
+    #[test]
+    fn natural_split_stops_counting_tokens_past_the_limit() {
+        // Each boundary scan must stop at the first overflowing candidate
+        // rather than tokenizing every remaining boundary. Scanning to
+        // end-of-text makes tokenizer input grow superlinearly in prompt
+        // length, and that cost is paid before the first chunk reaches
+        // synthesis, taxing time-to-first-audio on long prompts.
+        let sentence = "The relay finished its migration and the channel list refreshed. ";
+        let tokenized_bytes = |repeats: usize| -> usize {
+            let text = sentence.repeat(repeats).trim_end().to_string();
+            let total = std::cell::Cell::new(0_usize);
+            let chunks = split_at_natural_boundaries(&text, 50, true, |chunk| {
+                total.set(total.get() + chunk.len());
+                whitespace_token_count(chunk)
+            })
+            .expect("split repeated sentences");
+            assert_eq!(chunks.concat(), text);
+            assert!(chunks.len() > 1);
+            total.get()
+        };
+
+        // Doubling the prompt must not multiply tokenizer work superlinearly.
+        // Bounded scans grow ~2x here; scanning to end-of-text grows ~5.5x.
+        let single = tokenized_bytes(12);
+        let double = tokenized_bytes(24);
+        assert!(
+            double < single * 3,
+            "doubling the prompt grew tokenizer input from {single} to {double} bytes \
+             ({:.1}x); bounded scans stay near 2x",
+            double as f64 / single as f64,
+        );
     }
 
     #[test]
@@ -1490,8 +1841,10 @@ mod tests {
 
         assert!(chunks.len() > 1);
         assert!(chunks.iter().all(|chunk| {
-            engine.token_count(chunk).expect("tokenize chunk") <= engine.bundle.max_token_per_chunk
+            engine.prepared_token_count(chunk).expect("tokenize chunk")
+                <= engine.bundle.max_token_per_chunk
         }));
+        assert_eq!(chunks.concat(), prepared.text);
     }
 
     #[test]
@@ -1505,16 +1858,20 @@ mod tests {
         let chunks = engine.split_prompt(&prepared).expect("split long sentence");
         let token_counts: Vec<_> = chunks
             .iter()
-            .map(|chunk| engine.token_count(chunk).expect("count tokens"))
+            .map(|chunk| engine.prepared_token_count(chunk).expect("count tokens"))
             .collect();
 
-        assert_eq!(
-            chunks,
-            [
-                "And sometimes, when I am certain the reader is rested, I will engage him with a sentence of considerable length, a sentence that burns with energy and builds with all the.",
-                "Impetus of a crescendo, the roll of the drums, the crash of the cymbals–sounds that say listen to this, it is important.",
-            ]
-        );
-        assert_eq!(token_counts, [48, 44]);
+        assert!(token_counts
+            .iter()
+            .all(|&count| count <= engine.bundle.max_token_per_chunk));
+        assert_eq!(chunks.concat(), prepared.text);
+        assert!(chunks.len() > 1);
+        assert!(chunks[..chunks.len() - 1].iter().all(|chunk| {
+            chunk
+                .trim_end()
+                .chars()
+                .last()
+                .is_some_and(|ch| ['.', '!', '?', ',', ';', ':', '—', '–'].contains(&ch))
+        }));
     }
 }
