@@ -106,7 +106,6 @@ export function ComposerUploadProgressPill({
                     layout="position"
                     transition={phaseTransition}
                   >
-                    <span aria-hidden="true">·</span>
                     <AnimatePresence initial={false} mode="popLayout">
                       {isTransferring ? (
                         <motion.span
