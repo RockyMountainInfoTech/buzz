@@ -89,7 +89,6 @@ export function profilePanelTabFromSearch(value: unknown): ProfilePanelTab {
 }
 
 export type UserProfilePanelProps = {
-  callerChannelId?: string | null;
   canResetWidth?: boolean;
   currentPubkey?: string;
   isSinglePanelView?: boolean;

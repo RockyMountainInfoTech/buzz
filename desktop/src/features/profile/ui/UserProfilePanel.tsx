@@ -49,6 +49,7 @@ import {
 } from "@/features/profile/hooks";
 import { ownsAuthorAgent } from "@/features/profile/lib/identity";
 import { resolveProfileActivityAgent } from "@/features/profile/lib/profileActivityAgent";
+import { useCanonicalManagedAgentProfile } from "@/features/profile/lib/useCanonicalManagedAgentProfile";
 import {
   AgentInstructionsFocusedView,
   ProfileSummaryView,
@@ -99,7 +100,6 @@ import { useProfileEditAgentRequest } from "@/features/profile/ui/useProfileEdit
 export type { ProfilePanelTab, ProfilePanelView };
 
 export function UserProfilePanel({
-  callerChannelId = null,
   canResetWidth,
   currentPubkey,
   isSinglePanelView = false,
@@ -182,25 +182,15 @@ export function UserProfilePanel({
 
   const personasQuery = usePersonasQuery();
   const managedAgentsQuery = useManagedAgentsQuery({ enabled: true });
-  const managedAgent = React.useMemo(() => {
-    const agents = managedAgentsQuery.data ?? [];
-    if (pubkey) {
-      const pubkeyLower = pubkey.toLowerCase();
-      return agents.find((agent) => agent.pubkey.toLowerCase() === pubkeyLower);
-    }
-    if (persona) {
-      return agents.find((agent) => agent.personaId === persona.id);
-    }
-    return undefined;
-  }, [managedAgentsQuery.data, persona, pubkey]);
-  const personaInstances = React.useMemo(() => {
-    if (!managedAgent?.personaId) return managedAgent ? [managedAgent] : [];
-    return (managedAgentsQuery.data ?? []).filter(
-      (agent) => agent.personaId === managedAgent.personaId,
-    );
-  }, [managedAgent, managedAgentsQuery.data]);
+  const { linkedPersonaId, managedAgent, personaInstances } =
+    useCanonicalManagedAgentProfile({
+      currentPubkey,
+      managedAgents: managedAgentsQuery.data,
+      personaId: persona?.id,
+      pubkey,
+    });
   const resolvedPersonaFromSource = React.useMemo(() => {
-    const personaId = persona?.id ?? managedAgent?.personaId;
+    const personaId = linkedPersonaId ?? managedAgent?.personaId;
     if (personaId) {
       const refreshedPersona = personasQuery.data?.find(
         (candidate) => candidate.id === personaId,
@@ -218,14 +208,14 @@ export function UserProfilePanel({
     return personasQuery.data?.find(
       (candidate) => candidate.id === managedAgent.personaId,
     );
-  }, [managedAgent?.personaId, persona, personasQuery.data]);
+  }, [linkedPersonaId, managedAgent?.personaId, persona, personasQuery.data]);
   const profileIdentityKey =
-    pubkey ?? managedAgent?.pubkey ?? `persona:${persona?.id ?? "unknown"}`;
+    managedAgent?.pubkey ?? pubkey ?? `persona:${persona?.id ?? "unknown"}`;
   const resolvedPersona = useRetainedPersona(
     resolvedPersonaFromSource,
     profileIdentityKey,
   );
-  const effectivePubkey = pubkey ?? managedAgent?.pubkey ?? null;
+  const effectivePubkey = managedAgent?.pubkey ?? pubkey ?? null;
   const pubkeyLower = effectivePubkey?.toLowerCase() ?? "";
 
   const profileQuery = useUserProfileQuery(effectivePubkey ?? undefined);
@@ -788,7 +778,6 @@ export function UserProfilePanel({
           canInstantiateAgent={canInstantiateAgent}
           canOpenAgentLogs={canOpenAgentLogs}
           canViewActivity={canViewActivity}
-          callerChannelId={callerChannelId}
           channelCount={profileChannels.length}
           channelIdToName={channelIdToName}
           channels={profileChannels}
