@@ -313,7 +313,7 @@ class _MarkdownEditingController extends TextEditingController {
     TextStyle style,
   ) {
     final expression = RegExp(
-      r'buzz://(?:message\?|channel/|(?:repo|pr|issue)\?)[^\s<>"\x27)\]}*_]+',
+      r'''buzz://(?:message\?|channel/|(?:repo|pr|issue)\?)[^\s<>"']+''',
       caseSensitive: false,
     );
     final matches = expression.allMatches(source).toList();
@@ -333,7 +333,7 @@ class _MarkdownEditingController extends TextEditingController {
         );
       }
       final raw = match.group(0)!;
-      var url = raw.replaceFirst(RegExp(r'[.,!?:;]+$'), '');
+      final url = raw.replaceFirst(RegExp(r'[.,!?:;)\]}*]+$'), '');
       final trailing = raw.substring(url.length);
       final presentation = _composerLinkPresentation(url);
       if (presentation == null) {

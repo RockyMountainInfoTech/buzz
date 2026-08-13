@@ -2698,6 +2698,37 @@ void main() {
       );
     });
 
+    testWidgets('preserves underscore d-tags and Markdown delimiters', (
+      tester,
+    ) async {
+      final owner = 'ab' * 32;
+      final url = 'buzz://repo?owner=$owner&d=my_repo';
+      final source = '**$url**';
+      await tester.pumpWidget(
+        _buildComposeBar(
+          uploadService: _testUploadService(nostr.Keys.generate().nsec),
+          onSend: (_, _, {mediaTags = const <List<String>>[]}) async {},
+        ),
+      );
+
+      await _expandComposer(tester);
+      await tester.enterText(find.byType(TextField), source);
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('composer-buzz-link-chip:my_repo')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('composer-buzz-link-chip:my')),
+        findsNothing,
+      );
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        source,
+      );
+    });
+
     testWidgets('uses the primary color for formatting actions', (
       tester,
     ) async {
