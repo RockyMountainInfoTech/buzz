@@ -128,6 +128,8 @@ test("leading inline content falls back before code and media blocks", () => {
     ["![](https://example.com/review.png)", "<img"],
     ["```js\nconst answer = 42;\n```\n\nlater note", "<pre"],
     ["![](https://example.com/review.png)\n\nlater note", "<img"],
+    ["> ```js\nconst answer = 42;\n```\n\n> later note", "<pre"],
+    ["> ![](https://example.com/review.png)\n\n> later note", "<img"],
   ]) {
     const node = renderCachedMarkdown({
       ...BASE,

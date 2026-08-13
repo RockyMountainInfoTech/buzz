@@ -59,6 +59,20 @@ function markdownImageUrls(body: string): string[] {
   ];
 }
 
+/**
+ * Returns whether a message contains a video URL in a Markdown image that
+ * the renderer will actually mount. Orphan imeta entries are intentionally
+ * excluded because they do not produce a video player.
+ */
+export function hasRenderedVideoAttachment(
+  message: Pick<TimelineMessage, "body" | "tags">,
+): boolean {
+  const imetaByUrl = parseImetaTags(message.tags ?? []);
+  return markdownImageUrls(message.body).some((src) =>
+    isVideoMedia(src, imetaByUrl.get(src)?.m),
+  );
+}
+
 export function hasVideoAttachment(
   message: Pick<TimelineMessage, "body" | "tags">,
 ): boolean {

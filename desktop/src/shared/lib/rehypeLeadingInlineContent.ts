@@ -62,6 +62,10 @@ function leadingMarker(): HastElement {
   };
 }
 
+function isMeaningfulNode(node: HastNode): boolean {
+  return !(isText(node) && node.value.trim() === "");
+}
+
 function prependToFirstInlineTarget(node: HastNode): boolean {
   if (!isElement(node)) return false;
 
@@ -81,10 +85,11 @@ function prependToFirstInlineTarget(node: HastNode): boolean {
     return true;
   }
 
-  for (const child of node.children) {
-    if (prependToFirstInlineTarget(child)) return true;
-  }
-  return false;
+  // Only inspect the first rendered block. If it cannot accept inline content
+  // (for example, code or media), the caller inserts the fallback before its
+  // containing block instead of moving the marker into later prose.
+  const firstChild = node.children.find(isMeaningfulNode);
+  return firstChild ? prependToFirstInlineTarget(firstChild) : false;
 }
 
 /**

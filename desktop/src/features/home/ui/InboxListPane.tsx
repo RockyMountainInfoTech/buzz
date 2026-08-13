@@ -8,7 +8,7 @@ import {
   type InboxTypeLabel,
 } from "@/features/home/lib/inbox";
 import { buildInboxListRows } from "@/features/home/lib/inboxListRows";
-import { hasVideoAttachment } from "@/features/messages/lib/videoReviewContext";
+import { hasRenderedVideoAttachment } from "@/features/messages/lib/videoReviewContext";
 import { getThreadReference } from "@/features/messages/lib/threading";
 import { InboxFilterMenu } from "@/features/home/ui/InboxFilterMenu";
 import {
@@ -131,7 +131,10 @@ function getInboxVideoReviewCommentRootId(item: InboxItem) {
   const videoMessageIds = new Set(
     feedItems
       .filter((feedItem) =>
-        hasVideoAttachment({ body: feedItem.content, tags: feedItem.tags }),
+        hasRenderedVideoAttachment({
+          body: feedItem.content,
+          tags: feedItem.tags,
+        }),
       )
       .map((feedItem) => feedItem.id),
   );

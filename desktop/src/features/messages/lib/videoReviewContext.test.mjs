@@ -7,6 +7,7 @@ import {
   buildVideoReviewCommentRootIdsByMessageId,
   buildVideoReviewContextForMessage,
   buildVideoReviewContextsByMessageId,
+  hasRenderedVideoAttachment,
   hasVideoAttachment,
 } from "./videoReviewContext.ts";
 
@@ -59,8 +60,25 @@ test("hasVideoAttachment detects markdown and imeta videos", () => {
   );
 
   assert.equal(hasVideoAttachment(message({ body: "plain text" })), false);
+  assert.equal(
+    hasVideoAttachment(
+      message({
+        body: "orphan metadata only",
+        tags: [["imeta", "url https://cdn.example.com/cut.mp4", "m video/mp4"]],
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    hasRenderedVideoAttachment(
+      message({
+        body: "orphan metadata only",
+        tags: [["imeta", "url https://cdn.example.com/cut.mp4", "m video/mp4"]],
+      }),
+    ),
+    false,
+  );
 });
-
 test("hasVideoAttachment uses the Markdown renderer's video classification", () => {
   assert.equal(
     hasVideoAttachment(
