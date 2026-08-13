@@ -11,12 +11,14 @@ import {
   resolveLinkPreview,
 } from "@/shared/lib/useResolvedLinkPreviews";
 
-const POST_SUBMIT_PREVIEW_BUDGET_MS = 3_000;
+const POST_SUBMIT_METADATA_BUDGET_MS = 3_000;
+const POST_SUBMIT_TOTAL_PREVIEW_BUDGET_MS = 10_000;
 const SETTLED_PREVIEW_JOB_TTL_MS = 5 * 60_000;
 
 type PreviewJob = {
   promise: Promise<string[] | null>;
   fallbackTag: string[] | null;
+  resolvedTag: string[] | null;
   settled: boolean;
   settledAt: number | null;
 };
@@ -144,6 +146,7 @@ export function prepareLinkPreview(
   const job: PreviewJob = {
     promise: Promise.resolve(null),
     fallbackTag: null,
+    resolvedTag: null,
     settled: false,
     settledAt: null,
   };
@@ -152,6 +155,7 @@ export function prepareLinkPreview(
   })
     .catch(() => null)
     .then((tag) => {
+      job.resolvedTag = tag;
       if (tag === null && jobs.get(candidate.href) === job) {
         jobs.delete(candidate.href);
       }
@@ -172,7 +176,8 @@ export function prepareLinkPreview(
  */
 export function prepareBackgroundLinkPreviews(
   candidates: readonly SupportedLinkPreview[],
-  timeoutMs = POST_SUBMIT_PREVIEW_BUDGET_MS,
+  metadataTimeoutMs = POST_SUBMIT_METADATA_BUDGET_MS,
+  totalTimeoutMs = POST_SUBMIT_TOTAL_PREVIEW_BUDGET_MS,
 ): PreparedBackgroundLinkPreviews | null {
   const external = candidates.filter(
     (candidate) =>
@@ -193,19 +198,22 @@ export function prepareBackgroundLinkPreviews(
     };
   }
 
-  const fallbackTags = () =>
+  const availableTags = () =>
     external.flatMap((candidate) => {
-      const tag = jobs.get(candidate.href)?.fallbackTag;
+      const job = jobs.get(candidate.href);
+      const tag = job?.resolvedTag ?? job?.fallbackTag;
       return tag ? [tag] : [];
     });
   const taskId = nextTaskId++;
   let finish: ((tags: string[][]) => void) | null = null;
   let terminal = false;
-  let timer: ReturnType<typeof setTimeout> | null = null;
+  let metadataTimer: ReturnType<typeof setTimeout> | null = null;
+  let totalTimer: ReturnType<typeof setTimeout> | null = null;
   const complete = (tags: string[][]) => {
     if (terminal) return;
     terminal = true;
-    if (timer !== null) clearTimeout(timer);
+    if (metadataTimer !== null) clearTimeout(metadataTimer);
+    if (totalTimer !== null) clearTimeout(totalTimer);
     tasks.delete(taskId);
     publishSnapshot();
     finish?.(tags);
@@ -217,7 +225,17 @@ export function prepareBackgroundLinkPreviews(
   tasks.set(taskId, { id: taskId, skip });
   publishSnapshot();
 
-  timer = setTimeout(() => complete(fallbackTags()), timeoutMs);
+  metadataTimer = setTimeout(() => {
+    const tags = availableTags();
+    const allMetadataSettled = external.every((candidate) => {
+      const job = jobs.get(candidate.href);
+      return (
+        job !== undefined && (job.fallbackTag !== null || job.settled === true)
+      );
+    });
+    if (!allMetadataSettled) complete(tags);
+  }, metadataTimeoutMs);
+  totalTimer = setTimeout(() => complete(availableTags()), totalTimeoutMs);
   void Promise.all(external.map(prepareLinkPreview)).then((tags) => {
     complete(tags.filter((tag): tag is string[] => tag !== null));
   });

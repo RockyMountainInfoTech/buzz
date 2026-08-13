@@ -255,6 +255,9 @@ test.beforeEach(async ({ page }, testInfo) => {
                         ) ||
                         testInfo.title.includes("Skip wins the upload race") ||
                         testInfo.title.includes(
+                          "async upload beyond metadata budget",
+                        ) ||
+                        testInfo.title.includes(
                           "immediately pressing Enter prepares",
                         )
                       ? {
@@ -267,7 +270,11 @@ test.beforeEach(async ({ page }, testInfo) => {
                             imageDomain: "opengraph.githubassets.com",
                           },
                           linkPreviewMetadataDelayMs: 300,
-                          linkPreviewUploadDelayMs: 1_200,
+                          linkPreviewUploadDelayMs: testInfo.title.includes(
+                            "async upload beyond metadata budget",
+                          )
+                            ? 4_000
+                            : 1_200,
                         }
                       : testInfo.title.includes(
                             "snapshot thumbnail upload failure",
@@ -977,6 +984,37 @@ test("Enter during an in-flight snapshot upload hands off and sends once", async
       ).length,
   );
   expect(sends).toBe(1);
+});
+
+test("async upload beyond metadata budget retains preview image", async ({
+  page,
+}) => {
+  const previewUrl = "https://github.com/block/buzz/pull/3246?slow=image";
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  const input = page.getByTestId("message-input");
+  await input.fill(previewUrl);
+  await input.press("Enter");
+
+  const progress = page.getByTestId("composer-upload-progress");
+  await expect(progress).toHaveAccessibleName("Preparing link preview");
+  await page.waitForTimeout(3_200);
+  await expect(progress).toBeVisible();
+
+  const row = page.getByTestId("message-row").last();
+  await expect(row).toContainText(previewUrl);
+  await expect(row.locator("[data-link-preview]")).toHaveAttribute(
+    "data-image-state",
+    "image",
+  );
+  const tags = await page.evaluate(() => {
+    const call = [...(window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? [])]
+      .reverse()
+      .find((entry) => entry.command === "send_channel_message");
+    return (call?.payload as { linkPreviewTags?: string[][] }).linkPreviewTags;
+  });
+  expect(tags?.[0]?.[7]).toContain("/media/");
+  expect(tags?.[0]?.[8]).not.toBe("");
 });
 
 test("Skip wins the upload race and sends without preview", async ({
