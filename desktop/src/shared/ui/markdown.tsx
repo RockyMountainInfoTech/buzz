@@ -2,7 +2,6 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import type { Components } from "react-markdown";
 import {
-  AtSign,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -30,6 +29,7 @@ import { rewriteRelayUrl } from "@/shared/lib/mediaUrl";
 import { useRelayOrigin } from "@/shared/lib/useRelayOrigin";
 import { AttachmentGroup } from "@/shared/ui/attachment";
 import { ConfigNudgeCard } from "@/shared/ui/config-nudge-attachment";
+import { InlineChip } from "@/shared/ui/InlineChip";
 import { LinkPreviewList } from "@/shared/ui/link-preview-list";
 import { useSmoothCorners } from "@/shared/ui/smoothCorners";
 import {
@@ -38,8 +38,6 @@ import {
 } from "@/shared/lib/computeConfigNudge";
 import {
   INLINE_CODE_CHIP_CLASS,
-  MENTION_CHIP_BASE_CLASSES,
-  MENTION_CHIP_HOVER_CLASSES,
   MESSAGE_MARKDOWN_CLASS,
 } from "@/shared/ui/mentionChip";
 
@@ -1627,30 +1625,19 @@ export function createMarkdownComponents(
         pubkey !== undefined &&
         agentMentionPubkeysByName?.[mentionName] === pubkey;
       const mentionLabel = mentionText.replace(/^@/, "");
-      const renderedMentionText = isAgentMention ? (
-        mentionLabel
-      ) : (
-        <>
-          <AtSign aria-hidden="true" className="mention-chip-icon" />
-          {mentionLabel}
-        </>
-      );
       // Only chips that actually open a profile get the clickable affordance.
       // A mention whose pubkey didn't resolve stays a plain chip — a pointer
       // cursor there promises a click that does nothing.
       const opensProfile = interactive && pubkey !== undefined;
       const mentionNode = (
-        <span
+        <InlineChip
           data-mention=""
-          className={cn(
-            MENTION_CHIP_BASE_CLASSES,
-            opensProfile && "cursor-pointer",
-            opensProfile && MENTION_CHIP_HOVER_CLASSES,
-            isAgentMention && "agent-mention-highlight",
-          )}
+          className={cn(isAgentMention && "agent-mention-highlight")}
+          icon={isAgentMention ? "agent" : "human"}
+          interactive={opensProfile}
         >
-          {renderedMentionText}
-        </span>
+          {mentionLabel}
+        </InlineChip>
       );
 
       return opensProfile ? (

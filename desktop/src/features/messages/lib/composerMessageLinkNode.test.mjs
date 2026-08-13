@@ -14,6 +14,11 @@ const MarkdownIt = requireFromTiptap("markdown-it");
 const CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 const MESSAGE_ID = "root-event";
 const HREF = `buzz://message?channel=${CHANNEL_ID}&id=${MESSAGE_ID}`;
+const CHANNEL_HREF = `buzz://channel/${CHANNEL_ID}`;
+const OWNER = "a".repeat(64);
+const REPO_HREF = `buzz://repo?owner=${OWNER}&d=buzz-world`;
+const ISSUE_ID = "b".repeat(64);
+const ISSUE_HREF = `buzz://issue?id=${ISSUE_ID}&owner=${OWNER}&d=buzz-world`;
 
 test("resolves a composer preview and canonicalizes the underlying href", () => {
   assert.deepEqual(
@@ -32,6 +37,23 @@ test("rejects malformed message links", () => {
       () => "general",
     ),
     null,
+  );
+});
+
+test("resolves channel and entity links as composer chips", () => {
+  assert.deepEqual(
+    resolveComposerMessageLinkAttributes(CHANNEL_HREF, (channelId) =>
+      channelId === CHANNEL_ID ? "general" : undefined,
+    ),
+    { channelName: "general", href: CHANNEL_HREF },
+  );
+  assert.deepEqual(
+    resolveComposerMessageLinkAttributes(REPO_HREF, () => undefined),
+    { channelName: "", href: REPO_HREF },
+  );
+  assert.deepEqual(
+    resolveComposerMessageLinkAttributes(ISSUE_HREF, () => undefined),
+    { channelName: "", href: ISSUE_HREF },
   );
 });
 
@@ -85,9 +107,22 @@ test("real markdown-it parsing materializes a restored message link", () => {
   });
 
   const html = md.renderInline(`See ${HREF}.`);
-  assert.match(html, /See <span data-composer-message-link=""/);
+  assert.match(html, /See <span data-composer-buzz-link=""/);
   assert.match(html, /data-channel-name="general"/);
   assert.match(html, /data-href="buzz:\/\/message\?channel=.*&amp;id=/);
+});
+
+test("real markdown-it parsing materializes mixed Buzz permalink chips", () => {
+  const md = new MarkdownIt();
+  registerComposerMessageLinkMarkdownIt(md, {
+    resolveChannelName: (channelId) =>
+      channelId === CHANNEL_ID ? "general" : undefined,
+  });
+
+  const html = md.renderInline(`${HREF} ${CHANNEL_HREF} ${REPO_HREF}`);
+  assert.equal((html.match(/data-composer-buzz-link=""/g) ?? []).length, 3);
+  assert.match(html, /data-href="buzz:\/\/channel\/9a1657ac/);
+  assert.match(html, /data-href="buzz:\/\/repo\?owner=a{64}&amp;d=buzz-world/);
 });
 
 test("markdown parsing resumes after markdown-it consumes the buzz prefix", () => {
@@ -142,12 +177,38 @@ test("composer node uses the sent-message chip presentation", () => {
 
   assert.equal(rendered[0], "span");
   assert.match(rendered[1].class, /mention-chip/);
+  assert.match(rendered[1].class, /inline-chip-with-icon/);
+  assert.match(rendered[1].class, /inline-chip-icon-message/);
   assert.equal(rendered[1]["data-buzz-link"], "");
-  assert.equal(rendered[2][0], "span");
-  assert.match(rendered[2][1].class, /mention-chip-icon/);
-  assert.match(rendered[2][1].class, /composer-message-link-icon/);
-  assert.equal(rendered[2].length, 2);
-  assert.equal(rendered[3], "general · root-eve");
+  assert.equal(rendered[2], "general · root-eve");
+});
+
+test("composer node renders channel and entity chip presentations", () => {
+  const render = (href) =>
+    globalThis.structuredClone(
+      ComposerMessageLinkNode.config.renderHTML.call(
+        { options: { resolveChannelName: () => "general" } },
+        {
+          HTMLAttributes: {},
+          node: { attrs: { channelName: "general", href } },
+        },
+      ),
+    );
+
+  const channel = render(CHANNEL_HREF);
+  assert.equal(channel[1]["data-channel-deep-link"], "");
+  assert.match(channel[1].class, /inline-chip-icon-channel/);
+  assert.equal(channel[2], "general");
+
+  const repo = render(REPO_HREF);
+  assert.equal(repo[1]["data-buzz-link-kind"], "repo");
+  assert.match(repo[1].class, /inline-chip-icon-repo/);
+  assert.equal(repo[2], "buzz-world");
+
+  const issue = render(ISSUE_HREF);
+  assert.equal(issue[1]["data-buzz-link-kind"], "issue");
+  assert.match(issue[1].class, /inline-chip-icon-issue/);
+  assert.equal(issue[2], "buzz-world · bbbbbbbb");
 });
 
 test("markdown rendering stores identity in attributes, not visible id text", () => {
@@ -155,7 +216,7 @@ test("markdown rendering stores identity in attributes, not visible id text", ()
   const render = md.renderer.rules.buzz_composer_message_link;
   const html = render([{ meta: { channelName: "general", href: HREF } }], 0);
 
-  assert.match(html, /data-composer-message-link=""/);
+  assert.match(html, /data-composer-buzz-link=""/);
   assert.match(html, /data-channel-name="general"/);
   assert.match(html, /data-href="buzz:\/\/message\?channel=.*&amp;id=/);
   assert.doesNotMatch(html, />[^<]*root-event/);

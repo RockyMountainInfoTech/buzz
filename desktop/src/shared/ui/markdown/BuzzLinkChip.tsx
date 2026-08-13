@@ -1,24 +1,14 @@
 import * as React from "react";
-import type { LucideIcon } from "lucide-react";
 
-import { cn } from "@/shared/lib/cn";
 import { copyTextToClipboard } from "@/shared/lib/clipboard";
-import {
-  MENTION_CHIP_BASE_CLASSES,
-  MENTION_CHIP_HOVER_CLASSES,
-} from "@/shared/ui/mentionChip";
+import { InlineChip } from "@/shared/ui/InlineChip";
+import type { InlineChipIconKind } from "@/shared/ui/mentionChip";
 
 import {
   MediaContextMenu,
   type MediaContextMenuPosition,
   useDismissMediaContextMenu,
 } from "./MediaContextMenu";
-
-export const BUZZ_LINK_CHIP_CLASSES = cn(
-  "cursor-pointer",
-  MENTION_CHIP_BASE_CLASSES,
-  MENTION_CHIP_HOVER_CLASSES,
-);
 
 function useBuzzLinkContextMenu({
   href,
@@ -80,7 +70,7 @@ export function BuzzLinkChip({
   ...props
 }: Omit<React.ComponentPropsWithoutRef<"button">, "onClick"> & {
   href?: string;
-  icon: LucideIcon;
+  icon: InlineChipIconKind;
   interactive: boolean;
   onOpenLink: () => void;
 }) {
@@ -89,37 +79,34 @@ export function BuzzLinkChip({
     interactive,
     onOpenLink,
   });
-  const content = (
-    <>
-      <Icon aria-hidden="true" className="mention-chip-icon" />
-      {children}
-    </>
-  );
 
   if (!interactive) {
     return (
-      <span
-        data-buzz-link=""
-        className={cn(MENTION_CHIP_BASE_CLASSES, className)}
+      <InlineChip
         {...(props as React.HTMLAttributes<HTMLSpanElement>)}
+        data-buzz-link=""
+        className={className}
+        icon={Icon}
       >
-        {content}
-      </span>
+        {children}
+      </InlineChip>
     );
   }
 
   return (
     <>
-      <button
+      <InlineChip
         {...props}
-        type="button"
+        as="button"
         data-buzz-link=""
-        className={cn(BUZZ_LINK_CHIP_CLASSES, className)}
+        className={className}
+        icon={Icon}
+        interactive
         onClick={onOpenLink}
         onContextMenuCapture={onContextMenuCapture}
       >
-        {content}
-      </button>
+        {children}
+      </InlineChip>
       {contextMenu}
     </>
   );

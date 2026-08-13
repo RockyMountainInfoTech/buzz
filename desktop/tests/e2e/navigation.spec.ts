@@ -337,6 +337,47 @@ test("settings shortcut returns without opening search dialog", async ({
   await expect(page.getByTestId("search-results")).not.toBeVisible();
 });
 
+test("mixed Buzz permalinks render as chips in the composer", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+
+  const channelId = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
+  const owner = "a".repeat(64);
+  const issueId = "b".repeat(64);
+  const links = [
+    `buzz://message?channel=${channelId}&id=mock-general-welcome`,
+    `buzz://channel/${channelId}`,
+    `buzz://repo?owner=${owner}&d=buzz-world`,
+    `buzz://issue?id=${issueId}&owner=${owner}&d=buzz-world`,
+  ].join(" ");
+  const composerInput = page.getByTestId("message-input");
+  await composerInput.evaluate((element, text) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", text);
+    element.dispatchEvent(
+      new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData,
+      }),
+    );
+  }, links);
+
+  const chips = composerInput.locator('[data-composer-buzz-link=""]');
+  await expect(chips).toHaveCount(4);
+  await expect(chips.nth(0)).toHaveText("general · mock-gen");
+  await expect(chips.nth(1)).toHaveText("general");
+  await expect(chips.nth(2)).toHaveText("buzz-world");
+  await expect(chips.nth(3)).toHaveText("buzz-world · bbbbbbbb");
+  await expect(chips.nth(1)).toHaveClass(/inline-chip-icon-channel/);
+  await expect(chips.nth(2)).toHaveClass(/inline-chip-icon-repo/);
+  await expect(chips.nth(3)).toHaveClass(/inline-chip-icon-issue/);
+  await expect(composerInput).not.toContainText("buzz://");
+});
+
 test("message links to visible root messages open the thread panel", async ({
   page,
 }) => {
@@ -366,9 +407,7 @@ test("message links to visible root messages open the thread panel", async ({
   const composerLink = composerInput.locator('[data-composer-message-link=""]');
   await expect(composerLink).toHaveText("general · mock-gen");
   await expect(composerLink).toHaveClass(/mention-chip/);
-  await expect(
-    composerLink.locator("span.composer-message-link-icon"),
-  ).toHaveCount(1);
+  await expect(composerLink).toHaveClass(/inline-chip-icon-message/);
   await expect(composerLink).toHaveAttribute("data-buzz-link", "");
   await expect(composerLink).toHaveAttribute("title", "Thread in #general");
   await expect(composerInput).not.toContainText("buzz://message");

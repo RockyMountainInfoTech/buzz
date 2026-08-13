@@ -1,5 +1,4 @@
 import * as React from "react";
-import { CircleDot, FolderGit2, GitPullRequest } from "lucide-react";
 
 import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import {
@@ -20,19 +19,19 @@ function entityLinkPresentation(link: ParsedEntityLink) {
     case "repo":
       return {
         ariaLabel: `Open repository ${link.dtag}`,
-        icon: FolderGit2,
+        icon: "repo" as const,
         label: link.dtag,
       };
     case "pr":
       return {
         ariaLabel: `Open pull request ${link.id.slice(0, 8)} in repository ${link.dtag}`,
-        icon: GitPullRequest,
+        icon: "pr" as const,
         label: `${link.dtag} · ${link.id.slice(0, 8)}`,
       };
     case "issue":
       return {
         ariaLabel: `Open issue ${link.id.slice(0, 8)} in repository ${link.dtag}`,
-        icon: CircleDot,
+        icon: "issue" as const,
         label: `${link.dtag} · ${link.id.slice(0, 8)}`,
       };
   }

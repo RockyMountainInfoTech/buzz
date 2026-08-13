@@ -1066,13 +1066,13 @@ test("bare Buzz permalinks render cohesive icon-prefixed chips", () => {
   );
 
   assert.equal((html.match(/data-buzz-link=""/g) ?? []).length, 5);
-  assert.match(html, /lucide-message-square/);
+  assert.match(html, /inline-chip-icon-message/);
   assert.match(html, />engineering · c3b589fa</);
-  assert.match(html, /lucide-hash/);
+  assert.match(html, /inline-chip-icon-channel/);
   assert.match(html, />engineering</);
-  assert.match(html, /lucide-git-pull-request/);
-  assert.match(html, /lucide-circle-dot/);
-  assert.match(html, /lucide-folder-git-2/);
+  assert.match(html, /inline-chip-icon-pr/);
+  assert.match(html, /inline-chip-icon-issue/);
+  assert.match(html, /inline-chip-icon-repo/);
   assert.equal((html.match(/>buzz-world · c3b589fa</g) ?? []).length, 2);
   assert.match(html, />buzz-world</);
 });
@@ -1167,12 +1167,12 @@ test("channel references replace the authored hash with the channel icon", () =>
     ),
   );
 
-  assert.match(html, /lucide-hash/);
+  assert.match(html, /inline-chip-icon-channel/);
   assert.match(html, />engineering</);
   assert.doesNotMatch(html, />#engineering</);
 });
 
-test("resolved human mentions replace the authored at-sign with the Lucide icon", () => {
+test("resolved human mentions replace the authored at-sign with the shared icon", () => {
   const markdown = renderCachedMarkdown({
     components: createMarkdownComponents(false, false),
     content: "Ask @alice",
@@ -1197,7 +1197,7 @@ test("resolved human mentions replace the authored at-sign with the Lucide icon"
   );
 
   assert.match(html, /data-mention=""/);
-  assert.match(html, /lucide-at-sign/);
+  assert.match(html, /inline-chip-icon-human/);
   assert.match(html, />alice</);
   assert.doesNotMatch(html, />@alice</);
 });
@@ -1229,7 +1229,7 @@ test("agent mentions retain the bot treatment instead of the human icon", () => 
 
   assert.match(html, /data-mention=""/);
   assert.match(html, /agent-mention-highlight/);
-  assert.doesNotMatch(html, /lucide-at-sign/);
+  assert.match(html, /inline-chip-icon-agent/);
   assert.match(html, />alice</);
   assert.doesNotMatch(html, />@alice</);
 });
@@ -1261,6 +1261,6 @@ test("renderEntityLinkAnchor keeps chip styling when interaction is disabled", (
   const html = renderToStaticMarkup(el);
   assert.match(html, /data-buzz-link=""/);
   assert.match(html, /<span/);
-  assert.match(html, /class="mention-chip"/);
+  assert.match(html, /class="mention-chip\s/);
   assert.doesNotMatch(html, /<button/);
 });

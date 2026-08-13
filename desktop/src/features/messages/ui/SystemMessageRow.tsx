@@ -1,4 +1,4 @@
-import { AtSign, SmilePlus } from "lucide-react";
+import { SmilePlus } from "lucide-react";
 import * as React from "react";
 
 import { EmojiPicker } from "@/features/custom-emoji/ui/EmojiPicker";
@@ -19,11 +19,8 @@ import { cn } from "@/shared/lib/cn";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
 import { isPositiveEmojiParticle } from "@/shared/ui/EmojiBurstProvider";
-import {
-  MENTION_CHIP_BASE_CLASSES,
-  MENTION_CHIP_HOVER_CLASSES,
-  MESSAGE_MARKDOWN_CLASS,
-} from "@/shared/ui/mentionChip";
+import { InlineChip } from "@/shared/ui/InlineChip";
+import { MESSAGE_MARKDOWN_CLASS } from "@/shared/ui/mentionChip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { UserAvatar } from "@/shared/ui/UserAvatar";
@@ -273,24 +270,26 @@ function ProfileName({
   underlineOnHover?: boolean;
 }) {
   const isAgentMention = highlight && isAgent;
-  const node = (
+  const node = highlight ? (
+    <InlineChip
+      data-mention=""
+      className={cn(
+        isAgentMention && "agent-mention-highlight",
+        underlineOnHover && "hover:underline",
+      )}
+      icon={isAgentMention ? "agent" : "human"}
+      interactive={Boolean(pubkey)}
+    >
+      {children}
+    </InlineChip>
+  ) : (
     <span
-      data-mention={highlight ? "" : undefined}
       className={cn(
         pubkey && "cursor-pointer",
-        highlight
-          ? cn(
-              MENTION_CHIP_BASE_CLASSES,
-              MENTION_CHIP_HOVER_CLASSES,
-              isAgentMention && "agent-mention-highlight",
-            )
-          : "rounded-xs transition-colors hover:text-foreground",
+        "rounded-xs transition-colors hover:text-foreground",
         underlineOnHover && "hover:underline",
       )}
     >
-      {highlight && !isAgentMention ? (
-        <AtSign aria-hidden="true" className="mention-chip-icon" />
-      ) : null}
       {children}
     </span>
   );

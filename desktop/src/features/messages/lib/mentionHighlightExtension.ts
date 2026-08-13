@@ -2,6 +2,11 @@ import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey, type Transaction } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
+import {
+  inlineChipIconClasses,
+  MENTION_CHIP_BASE_CLASSES,
+} from "@/shared/ui/mentionChip";
+
 export const mentionHighlightKey = new PluginKey("mentionHighlight");
 
 /**
@@ -267,7 +272,7 @@ function buildDecorations(
       node.text,
       pos,
       mentionPatterns,
-      "mention-chip human-mention-highlight",
+      `${MENTION_CHIP_BASE_CLASSES} ${inlineChipIconClasses("human")}`,
       { hideMentionPrefix: true },
     );
     addMatchesForPatterns(
@@ -275,7 +280,7 @@ function buildDecorations(
       node.text,
       pos,
       agentMentionPatterns,
-      "mention-chip agent-mention-highlight",
+      `${MENTION_CHIP_BASE_CLASSES} ${inlineChipIconClasses("agent")}`,
       { hideMentionPrefix: true },
     );
     addMatchesForPatterns(

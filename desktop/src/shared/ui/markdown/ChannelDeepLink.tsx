@@ -1,5 +1,4 @@
 import type * as React from "react";
-import { Hash } from "lucide-react";
 
 import {
   buildChannelLink,
@@ -46,7 +45,7 @@ export function ChannelDeepLinkAnchor({
   return (
     <BuzzLinkChip
       href={href}
-      icon={Hash}
+      icon="channel"
       title={href}
       aria-label={`Open channel ${label}`}
       interactive={interactive}
@@ -73,7 +72,7 @@ export function MarkdownChannelDeepLink({
     <BuzzLinkChip
       data-channel-deep-link=""
       href={href}
-      icon={Hash}
+      icon="channel"
       title={href}
       aria-label={`Open channel ${label}`}
       interactive={interactive}
@@ -103,7 +102,7 @@ export function MarkdownChannelReference({
     <BuzzLinkChip
       data-channel-link=""
       href={channel ? buildChannelLink(channel.id) : undefined}
-      icon={Hash}
+      icon="channel"
       aria-label={
         channel ? `Open channel ${channelName}` : `Channel ${channelName}`
       }

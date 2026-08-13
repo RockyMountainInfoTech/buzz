@@ -1,5 +1,4 @@
 import * as React from "react";
-import { MessageSquare } from "lucide-react";
 
 import { buildMessageLink } from "@/features/messages/lib/messageLink";
 import { cn } from "@/shared/lib/cn";
@@ -65,7 +64,7 @@ export function MessageLinkPill({
       <BuzzLinkChip
         data-message-link=""
         href={permalink}
-        icon={MessageSquare}
+        icon="message"
         aria-label={`Open message ${shortId} in channel ${channelLabel}`}
         title={label}
         interactive={interactive}

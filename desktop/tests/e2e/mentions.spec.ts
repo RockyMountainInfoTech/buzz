@@ -1757,7 +1757,7 @@ test("sent non-member person mention uses the normal mention style", async ({
     .last()
     .locator("[data-mention]", { hasText: "outsider" });
   await expect(mentionChip).toBeVisible();
-  await expect(mentionChip.locator("svg.lucide-at-sign")).toHaveCount(1);
+  await expect(mentionChip).toHaveClass(/inline-chip-icon-human/);
 });
 
 test("sent managed non-member agent mention uses the agent mention style", async ({
@@ -1896,7 +1896,7 @@ test("mention text is highlighted in sent messages", async ({ page }) => {
     .locator("[data-mention].mention-chip", { hasText: "bob" });
   await expect(mentionChip).toBeVisible();
   await expect(mentionChip).toHaveText("bob");
-  await expect(mentionChip.locator("svg.lucide-at-sign")).toHaveCount(1);
+  await expect(mentionChip).toHaveClass(/inline-chip-icon-human/);
 });
 
 test("clicking author name opens user profile panel", async ({ page }) => {
