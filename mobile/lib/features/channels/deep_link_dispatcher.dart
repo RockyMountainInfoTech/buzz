@@ -63,7 +63,7 @@ class _DeepLinkDispatcherState extends ConsumerState<DeepLinkDispatcher> {
   }
 
   void _maybeDispatch(BuzzDeepLink? link) {
-    if (link == null) return;
+    if (link == null || _preparingInvite) return;
     if (link is InviteDeepLink) {
       _maybeDispatchInvite(link);
       return;
@@ -121,9 +121,11 @@ class _DeepLinkDispatcherState extends ConsumerState<DeepLinkDispatcher> {
     final navigatorContext = context;
     final messenger = ScaffoldMessenger.maybeOf(context);
     Future.microtask(() async {
+      var consumed = false;
       try {
         await ref.read(inviteJoinProvider.notifier).prepare(link);
         ref.read(pendingDeepLinkProvider.notifier).consume();
+        consumed = true;
         if (!navigatorContext.mounted) return;
         final status = ref.read(inviteJoinProvider).status;
         if (status == InviteJoinStatus.confirming) {
@@ -146,6 +148,9 @@ class _DeepLinkDispatcherState extends ConsumerState<DeepLinkDispatcher> {
         }
       } finally {
         _preparingInvite = false;
+        if (mounted && consumed) {
+          _maybeDispatch(ref.read(pendingDeepLinkProvider));
+        }
       }
     });
   }

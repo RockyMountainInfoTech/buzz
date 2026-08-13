@@ -228,6 +228,77 @@ void main() {
     expect(find.text('Join this Buzz community?'), findsOneWidget);
   });
 
+  testWidgets('drains consecutive queued invites after preparation completes', (
+    tester,
+  ) async {
+    const first = InviteDeepLink(
+      relayUrl: 'wss://relay.example.com',
+      code: 'invite-one',
+    );
+    const second = InviteDeepLink(
+      relayUrl: 'wss://relay.example.com',
+      code: 'invite-two',
+    );
+    final pending = _QueuedPendingDeepLinkNotifier([first, second]);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          communityStorageProvider.overrideWithValue(
+            CommunityStorage(secure: FakeSecureStorage()),
+          ),
+          pendingDeepLinkProvider.overrideWith(() => pending),
+        ],
+        child: const MaterialApp(
+          home: DeepLinkDispatcher(child: Scaffold(body: SizedBox())),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(pending.consumeCalls, 2);
+    expect(pending.current, isNull);
+  });
+
+  testWidgets('dispatches a queued channel after preparing an invite', (
+    tester,
+  ) async {
+    const invite = InviteDeepLink(
+      relayUrl: 'wss://relay.example.com',
+      code: 'invite-code',
+    );
+    const channelLink = ChannelDeepLink(channelId: 'channel-1');
+    final pending = _QueuedPendingDeepLinkNotifier([invite, channelLink]);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          communityStorageProvider.overrideWithValue(
+            CommunityStorage(secure: FakeSecureStorage()),
+          ),
+          pendingDeepLinkProvider.overrideWith(() => pending),
+          channelsProvider.overrideWith(
+            () => _FakeChannelsNotifier(Future.value([_channel])),
+          ),
+        ],
+        child: MaterialApp(
+          home: DeepLinkDispatcher(
+            destinationBuilder: (channel, link) =>
+                _CapturedDestination(channel: channel, link: link),
+            child: const Scaffold(body: SizedBox()),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(pending.consumeCalls, 2);
+    final destination = tester.widget<_CapturedDestination>(
+      find.byType(_CapturedDestination),
+    );
+    expect(destination.link, same(channelLink));
+  });
+
   testWidgets(
     'dispatches invite before auth while leaving message links parked',
     (tester) async {
@@ -335,6 +406,7 @@ class _QueuedPendingDeepLinkNotifier extends PendingDeepLinkNotifier {
   int consumeCalls = 0;
 
   BuzzDeepLink? get _firstOrNull => _links.isEmpty ? null : _links.first;
+  BuzzDeepLink? get current => _firstOrNull;
 
   @override
   BuzzDeepLink? build() => _firstOrNull;
