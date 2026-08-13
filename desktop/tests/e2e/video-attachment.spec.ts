@@ -5,6 +5,7 @@ import { expectCornerRadiusPx, expectSmoothCorners } from "../helpers/css";
 
 const VIDEO_SHA = "b".repeat(64);
 const VIDEO_URL = `http://localhost:3000/media/${VIDEO_SHA}.mp4`;
+const EXTENSIONLESS_VIDEO_URL = `http://localhost:3000/media/${VIDEO_SHA}`;
 const GENERAL_CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 const PORTRAIT_VIDEO_SHA = "c".repeat(64);
 const PORTRAIT_VIDEO_URL = `http://localhost:3000/media/${PORTRAIT_VIDEO_SHA}.mp4`;
@@ -903,12 +904,12 @@ test("video replies in threads open the review comments view", async ({
   const videoReply = (await emitMockMessage(
     page,
     "general",
-    `![video](${VIDEO_URL})`,
+    `![video](${EXTENSIONLESS_VIDEO_URL})`,
     {
       extraTags: [
         [
           "imeta",
-          `url ${VIDEO_URL}`,
+          `url ${EXTENSIONLESS_VIDEO_URL}`,
           "m video/mp4",
           `x ${VIDEO_SHA}`,
           "size 987654",

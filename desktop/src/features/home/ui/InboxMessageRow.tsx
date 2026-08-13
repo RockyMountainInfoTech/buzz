@@ -19,6 +19,7 @@ import { hasLinkPreviewSuppression } from "@/features/messages/lib/formatTimelin
 import { UserAvatar } from "@/shared/ui/UserAvatar";
 import type { VideoReviewContext } from "@/shared/ui/VideoPlayer";
 import { VideoReviewCommentMarkdown } from "@/shared/ui/VideoReviewCommentMarkdown";
+import { parseImetaTags } from "@/shared/ui/markdown/parseImeta";
 
 export type InboxDisplayMessage = InboxContextMessage & {
   depth: number;
@@ -63,6 +64,10 @@ export function InboxMessageRow({
   const timelineMessage = React.useMemo(
     () => toTimelineMessage(message),
     [message],
+  );
+  const imetaByUrl = React.useMemo(
+    () => (message.tags ? parseImetaTags(message.tags) : undefined),
+    [message.tags],
   );
   const { customEmoji, emojiOnly } = useMessageEmoji(
     message.content,
@@ -226,6 +231,7 @@ export function InboxMessageRow({
                 timelineMessage.tags,
               )}
               customEmoji={customEmoji}
+              imetaByUrl={imetaByUrl}
               mentionNames={message.mentionNames}
               mentionPubkeysByName={message.mentionPubkeysByName}
               videoReviewCommentRootId={videoReviewCommentRootId}
