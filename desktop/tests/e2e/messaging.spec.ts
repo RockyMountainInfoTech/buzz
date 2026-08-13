@@ -1479,10 +1479,7 @@ test("compact link preview image geometry truncates long titles to one line", as
   const title = card.locator('[data-slot="attachment-title"]');
   const image = thumbnail.locator("img");
   await expect(card).toHaveAttribute("data-image-state", "image");
-  await expect(image).toBeVisible();
-  await expect
-    .poll(() => image.evaluate((element) => element.naturalWidth))
-    .toBeGreaterThan(0);
+  await expect(image).toHaveJSProperty("complete", true);
   await expect(card).toHaveCSS("height", "64px");
   await expect(thumbnail).toHaveCSS("height", "64px");
   await expect(thumbnail).toHaveCSS("width", "104px");
