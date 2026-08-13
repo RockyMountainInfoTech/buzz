@@ -76,10 +76,9 @@ import {
   type ProfilePanelTab,
   type ProfilePanelView,
   resolveAgentInstruction,
+  resolveManagedProfileState,
   resolvePanelProfile,
-  resolvePersonaInstances,
   resolveProfileDisplayName,
-  resolveProfileManagedAgent,
   truncatePubkey,
   type UserProfilePanelProps,
   useRetainedPersona,
@@ -189,24 +188,23 @@ export function UserProfilePanel({
   const managedAgentsQuery = useManagedAgentsQuery({ enabled: true });
   const isArchived = useIsArchivedPredicate();
   const managedAgents = managedAgentsQuery.data ?? [];
-  const managedAgent = React.useMemo(
+  const {
+    managedAgent,
+    personaId: targetPersonaId,
+    instances: personaInstances,
+  } = React.useMemo(
     () =>
-      resolveProfileManagedAgent(
+      resolveManagedProfileState(
         managedAgents,
         { persona, pubkey },
         isArchived,
       ),
     [managedAgents, persona, pubkey, isArchived],
   );
-  const personaInstances = React.useMemo(() => {
-    const id = persona?.id ?? managedAgent?.personaId;
-    return resolvePersonaInstances(id, managedAgent, managedAgents, isArchived);
-  }, [persona?.id, managedAgent, managedAgents, isArchived]);
   const resolvedPersonaFromSource = React.useMemo(() => {
-    const personaId = persona?.id ?? managedAgent?.personaId;
-    if (personaId) {
+    if (targetPersonaId) {
       const refreshedPersona = personasQuery.data?.find(
-        (candidate) => candidate.id === personaId,
+        (candidate) => candidate.id === targetPersonaId,
       );
       if (refreshedPersona) {
         return refreshedPersona;
@@ -221,7 +219,7 @@ export function UserProfilePanel({
     return personasQuery.data?.find(
       (candidate) => candidate.id === managedAgent.personaId,
     );
-  }, [managedAgent?.personaId, persona, personasQuery.data]);
+  }, [targetPersonaId, managedAgent?.personaId, persona, personasQuery.data]);
   const profileIdentityKey =
     pubkey ?? managedAgent?.pubkey ?? `persona:${persona?.id ?? "unknown"}`;
   const resolvedPersona = useRetainedPersona(

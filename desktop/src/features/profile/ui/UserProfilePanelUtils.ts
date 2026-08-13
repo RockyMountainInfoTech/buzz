@@ -223,6 +223,36 @@ export function resolvePersonaInstances(
   return { live, archived };
 }
 
+/**
+ * Compose a profile click into its primary managed-agent selection and its
+ * instance buckets in ONE place. `resolveProfileManagedAgent` picks the primary
+ * instance (or `undefined` when every sibling is archived); the grouping
+ * `personaId` is then taken from the click target — `persona?.id ??
+ * managedAgent?.personaId` — so instance bucketing keys off the persona set
+ * INDEPENDENTLY of that nullable primary selection. This is the single
+ * composition the panel and its seam regression both call, so an all-archived
+ * persona cannot lose its Archived bucket in one path without failing the other.
+ */
+export function resolveManagedProfileState(
+  agents: readonly ManagedAgent[],
+  target: { persona?: { id: string }; pubkey?: string | null },
+  isArchived: (pubkey: string) => boolean,
+): {
+  managedAgent: ManagedAgent | undefined;
+  personaId: string | null | undefined;
+  instances: { live: ManagedAgent[]; archived: ManagedAgent[] };
+} {
+  const managedAgent = resolveProfileManagedAgent(agents, target, isArchived);
+  const personaId = target.persona?.id ?? managedAgent?.personaId;
+  const instances = resolvePersonaInstances(
+    personaId,
+    managedAgent,
+    agents,
+    isArchived,
+  );
+  return { managedAgent, personaId, instances };
+}
+
 export function buildPersonaDraftProfile(persona: AgentPersona): Profile {
   return {
     pubkey: "",
