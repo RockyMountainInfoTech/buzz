@@ -1,8 +1,13 @@
 import * as React from "react";
 
 import { hasPrimaryShortcutModifier } from "@/shared/lib/platform";
+import {
+  HUDDLE_SHORTCUT_EVENT,
+  type HuddleShortcutDetail,
+} from "@/shared/lib/keyboard-shortcuts";
 
 type AppShellKeyboardShortcutsOptions = {
+  activeChannelId: string | null;
   canSearchCurrentChannel: boolean;
   disabled: boolean;
   onBrowseChannels: () => void;
@@ -14,6 +19,7 @@ type AppShellKeyboardShortcutsOptions = {
 };
 
 export function useAppShellKeyboardShortcuts({
+  activeChannelId,
   canSearchCurrentChannel,
   disabled,
   onBrowseChannels,
@@ -27,6 +33,23 @@ export function useAppShellKeyboardShortcuts({
     if (disabled) return;
 
     function handleKeyDown(event: KeyboardEvent) {
+      const isHuddleShortcut =
+        event.ctrlKey &&
+        event.shiftKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        event.code === "Space";
+      if (isHuddleShortcut) {
+        if (event.repeat || event.defaultPrevented || !activeChannelId) return;
+        event.preventDefault();
+        window.dispatchEvent(
+          new CustomEvent<HuddleShortcutDetail>(HUDDLE_SHORTCUT_EVENT, {
+            detail: { channelId: activeChannelId },
+          }),
+        );
+        return;
+      }
+
       if (
         !hasPrimaryShortcutModifier(event) ||
         event.altKey ||
@@ -73,9 +96,11 @@ export function useAppShellKeyboardShortcuts({
       }
     }
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", handleKeyDown, { capture: true });
   }, [
+    activeChannelId,
     canSearchCurrentChannel,
     disabled,
     onBrowseChannels,

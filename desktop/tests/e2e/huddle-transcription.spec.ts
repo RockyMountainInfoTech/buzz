@@ -1254,6 +1254,64 @@ test("starts unmuted with Push to Talk while preserving manual microphone contro
     .toEqual({ enabled: true });
 });
 
+test("toggles the current channel huddle with Control+Shift+Space", async ({
+  page,
+}) => {
+  await installFakeHuddleMicrophone(page);
+  await installMockBridge(page, {
+    openHuddleWindowDelayMs: 10_000,
+  });
+  await page.goto("/");
+  await page.getByTestId("channel-alice-tyler").click();
+  await expect(page.getByTestId("channel-start-huddle-trigger")).toBeEnabled();
+  const pressHuddleShortcut = () =>
+    page.evaluate(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          code: "Space",
+          ctrlKey: true,
+          key: " ",
+          shiftKey: true,
+        }),
+      );
+    });
+
+  await pressHuddleShortcut();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window.__BUZZ_E2E_COMMAND_LOG__ ?? []).filter(
+            (entry) => entry.command === "start_huddle",
+          ).length,
+      ),
+    )
+    .toBe(1);
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const state = (await window.__BUZZ_E2E_INVOKE_MOCK_COMMAND__?.(
+          "get_huddle_state",
+        )) as { phase: string };
+        return state.phase;
+      }),
+    )
+    .toBe("active");
+
+  await pressHuddleShortcut();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window.__BUZZ_E2E_COMMAND_LOG__ ?? []).filter(
+            (entry) => entry.command === "leave_huddle",
+          ).length,
+      ),
+    )
+    .toBe(1);
+});
+
 test("starts an agent DM huddle and hides its backing channel after it ends", async ({
   page,
 }) => {
