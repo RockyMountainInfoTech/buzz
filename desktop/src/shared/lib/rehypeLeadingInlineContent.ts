@@ -70,8 +70,11 @@ function prependToFirstInlineTarget(node: HastNode): boolean {
     // list items. Tight list items contain text directly, so the <li> itself
     // is the correct fallback target.
     if (node.tagName === "li") {
-      for (const child of node.children) {
-        if (prependToFirstInlineTarget(child)) return true;
+      const directParagraph = node.children.find(
+        (child) => isElement(child) && child.tagName === "p",
+      );
+      if (directParagraph && prependToFirstInlineTarget(directParagraph)) {
+        return true;
       }
     }
     node.children.unshift(leadingMarker());
@@ -92,7 +95,9 @@ function prependToFirstInlineTarget(node: HastNode): boolean {
 export default function rehypeLeadingInlineContent() {
   return (tree: HastRoot) => {
     for (const child of tree.children) {
+      if (isText(child) && child.value.trim() === "") continue;
       if (prependToFirstInlineTarget(child)) return;
+      break;
     }
 
     tree.children.unshift({

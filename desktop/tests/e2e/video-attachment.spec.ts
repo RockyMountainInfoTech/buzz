@@ -33,6 +33,15 @@ const VIDEO_REVIEW_NEUTRAL_DARK_RGB = "rgb(250, 250, 250)";
 const POSTER_DATA_URL =
   "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNjAgODAiPjxyZWN0IHdpZHRoPSIxNjAiIGhlaWdodD0iODAiIGZpbGw9IiMyNjQ2NTMiLz48Y2lyY2xlIGN4PSI1NCIgY3k9IjQwIiByPSIyMiIgZmlsbD0iI2YyYzE0ZSIvPjxwYXRoIGQ9Ik05MiAyNGg0NHYzMkg5MnoiIGZpbGw9IiNmNzgxNTQiLz48L3N2Zz4=";
 
+type MockFeedMessage = {
+  content: string;
+  created_at: number;
+  id: string;
+  kind: number;
+  pubkey: string;
+  tags: string[][];
+};
+
 async function waitForMockLiveSubscription(page: Page, channelName: string) {
   await expect
     .poll(async () => {
@@ -80,6 +89,43 @@ function emitMockMessage(
       extraTags: options.extraTags,
       parentEventId: options.parentEventId,
     },
+  );
+}
+
+function pushMockFeedItems(page: Page, messages: MockFeedMessage[]) {
+  return page.evaluate(
+    ({ channelId, messages }) => {
+      const pushFeedItem = (
+        window as Window & {
+          __BUZZ_E2E_PUSH_MOCK_FEED_ITEM__?: (item: {
+            category: "mention";
+            channel_id: string;
+            channel_name: string;
+            content: string;
+            created_at: number;
+            id: string;
+            kind: number;
+            pubkey: string;
+            tags: string[][];
+          }) => unknown;
+        }
+      ).__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__;
+      if (!pushFeedItem) throw new Error("Mock feed helper is unavailable.");
+      for (const message of messages) {
+        pushFeedItem({
+          category: "mention",
+          channel_id: channelId,
+          channel_name: "general",
+          content: message.content,
+          created_at: message.created_at,
+          id: message.id,
+          kind: message.kind,
+          pubkey: message.pubkey,
+          tags: message.tags,
+        });
+      }
+    },
+    { channelId: GENERAL_CHANNEL_ID, messages },
   );
 }
 
@@ -900,7 +946,7 @@ test("video replies in threads open the review comments view", async ({
     page,
     "general",
     "Can you review this cut?",
-  )) as { id: string };
+  )) as MockFeedMessage;
   const videoReply = (await emitMockMessage(
     page,
     "general",
@@ -927,46 +973,8 @@ test("video replies in threads open the review comments view", async ({
     "general",
     "[00:01] > Tighten this transition.",
     { parentEventId: videoReply.id },
-  )) as {
-    content: string;
-    created_at: number;
-    id: string;
-    kind: number;
-    pubkey: string;
-    tags: string[][];
-  };
-  await page.evaluate(
-    ({ channelId, comment }) => {
-      const pushFeedItem = (
-        window as Window & {
-          __BUZZ_E2E_PUSH_MOCK_FEED_ITEM__?: (item: {
-            category: "mention";
-            channel_id: string;
-            channel_name: string;
-            content: string;
-            created_at: number;
-            id: string;
-            kind: number;
-            pubkey: string;
-            tags: string[][];
-          }) => unknown;
-        }
-      ).__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__;
-      if (!pushFeedItem) throw new Error("Mock feed helper is unavailable.");
-      pushFeedItem({
-        category: "mention",
-        channel_id: channelId,
-        channel_name: "general",
-        content: comment.content,
-        created_at: comment.created_at,
-        id: comment.id,
-        kind: comment.kind,
-        pubkey: comment.pubkey,
-        tags: comment.tags,
-      });
-    },
-    { channelId: GENERAL_CHANNEL_ID, comment: reviewComment },
-  );
+  )) as MockFeedMessage;
+  await pushMockFeedItems(page, [videoReply, reviewComment]);
 
   const threadSummary = page.locator(`[data-thread-head-id="${root.id}"]`);
   await expect(threadSummary).toBeVisible();
@@ -1089,6 +1097,35 @@ test("video replies in threads open the review comments view", async ({
   ).toBeVisible();
   await inboxDetailTimecode.click();
   await expect(page.getByTestId("video-review-dialog")).toBeVisible();
+});
+
+test("Inbox preserves bracketed timestamps without video evidence", async ({
+  page,
+}) => {
+  await installVideoReviewHarness(page);
+
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await waitForMockLiveSubscription(page, "general");
+
+  const root = (await emitMockMessage(page, "general", "Planning note")) as {
+    id: string;
+  };
+  const reply = (await emitMockMessage(
+    page,
+    "general",
+    "[12:30] Meeting starts",
+    { parentEventId: root.id },
+  )) as MockFeedMessage;
+  await pushMockFeedItems(page, [reply]);
+
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  const inboxRow = page.getByTestId(`home-inbox-item-${reply.id}`);
+  await expect(inboxRow).toContainText("[12:30] Meeting starts");
+  await expect(
+    inboxRow.getByTestId("video-review-comment-timecode"),
+  ).toHaveCount(0);
 });
 
 test("message timecodes deterministically open the first attached video", async ({

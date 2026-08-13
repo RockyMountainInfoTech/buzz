@@ -123,9 +123,11 @@ test("leading inline content falls back before code and media blocks", () => {
         : React.createElement("span", props, children),
   };
 
-  for (const content of [
-    "```js\nconst answer = 42;\n```",
-    "![](https://example.com/review.png)",
+  for (const [content, blockPattern] of [
+    ["```js\nconst answer = 42;\n```", "<pre"],
+    ["![](https://example.com/review.png)", "<img"],
+    ["```js\nconst answer = 42;\n```\n\nlater note", "<pre"],
+    ["![](https://example.com/review.png)\n\nlater note", "<img"],
   ]) {
     const node = renderCachedMarkdown({
       ...BASE,
@@ -136,11 +138,33 @@ test("leading inline content falls back before code and media blocks", () => {
     });
     const html = renderToStaticMarkup(node);
     assert.match(html, /<p><button[^>]*>00:01<\/button><\/p>/);
-    assert.ok(
-      html.indexOf("<button") <
-        Math.max(html.indexOf("<pre"), html.indexOf("<img")),
-    );
+    assert.ok(html.indexOf("<button") < html.indexOf(blockPattern));
   }
+});
+
+test("leading inline content stays on the outer tight-list item", () => {
+  const components = {
+    span: ({ children, node: _node, ...props }) =>
+      "data-leading-inline-content" in props
+        ? React.createElement(
+            "button",
+            { "data-chip": "", type: "button" },
+            "00:01",
+          )
+        : React.createElement("span", props, children),
+  };
+  const node = renderCachedMarkdown({
+    ...BASE,
+    components,
+    content: "- parent\n  - child",
+    leadingInlineContent: true,
+    variant: "leading-tight-nested-list",
+  });
+
+  assert.match(
+    renderToStaticMarkup(node),
+    /<li><button[^>]*>00:01<\/button>parent\s*<ul>\s*<li>child<\/li>/,
+  );
 });
 
 test("leading inline content participates in the cache key", () => {

@@ -33,7 +33,6 @@ import {
   ContextMenuTrigger,
 } from "@/shared/ui/context-menu";
 import { VideoReviewCommentMarkdown } from "@/shared/ui/VideoReviewCommentMarkdown";
-import { parseVideoReviewTimecode } from "@/shared/ui/videoReviewTimecode";
 import {
   MENTION_CHIP_BASE_CLASSES,
   MESSAGE_MARKDOWN_CLASS,
@@ -146,10 +145,7 @@ function getInboxVideoReviewCommentRootId(item: InboxItem) {
     ancestorId = ancestor ? getThreadReference(ancestor.tags).parentId : null;
   }
 
-  return parseVideoReviewTimecode(item.preview) &&
-    getThreadReference(item.item.tags).parentId
-    ? item.conversationId
-    : undefined;
+  return undefined;
 }
 
 function PersonalItemRow({
