@@ -1,4 +1,4 @@
-import type * as React from "react";
+import * as React from "react";
 
 import { cn } from "@/shared/lib/cn";
 
@@ -43,6 +43,37 @@ export function MessageMetaSeparator() {
     <span aria-hidden="true" className="text-xs text-muted-foreground/40">
       ·
     </span>
+  );
+}
+
+/**
+ * Renders divider-separated header metadata segments in order, skipping empty
+ * slots. Each divider is grouped with the segment it precedes so the two wrap
+ * together — as loose siblings in a flex-wrap row, a divider can end up alone
+ * at the start of the second line.
+ */
+export function MessageMetaSegments({
+  segments,
+}: {
+  segments: ReadonlyArray<{ key: string; node: React.ReactNode }>;
+}) {
+  const present = segments.filter((slot) => Boolean(slot.node));
+  return (
+    <>
+      {present.map(({ key, node }, index) =>
+        index === 0 ? (
+          <React.Fragment key={key}>{node}</React.Fragment>
+        ) : (
+          <span
+            className="inline-flex min-w-0 items-baseline gap-x-1.5"
+            key={key}
+          >
+            <MessageMetaSeparator />
+            {node}
+          </span>
+        ),
+      )}
+    </>
   );
 }
 
