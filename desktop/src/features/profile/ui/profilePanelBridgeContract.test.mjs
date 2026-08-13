@@ -21,20 +21,31 @@ import test from "node:test";
  * `showRuntimeTab` gate (ProfileSummaryView) that decides whether the Runtime
  * tab renders, and the `hasInstances` gate (ProfileRuntimeTabContent) that
  * decides whether ProfileInstancesSection renders. For an all-archived persona
- * `archivedInstances.length > 0` is the ONLY true operand of each gate, so it
- * must survive as a whole `||` operand. The behavioral mount both this and
- * Thufir preferred is not reachable from a test-file-only change: importing
- * either gate's module transitively loads AgentSessionTranscriptList, which
- * reads `import.meta.env.VITE_SHOW_TRANSCRIPT_ACP_SOURCE` at module-evaluation
- * time and throws under the node test harness (no `import.meta.env`); shimming
- * it would require editing the shared loader or that component, outside this
- * change's boundary. So the two gates are pinned by parsing each initializer
- * rather than matching text: comments are stripped, the named initializer is
- * extracted, and `archivedInstances.length > 0` must appear as one whole
- * operand of its `||` chain. An operator swap (`||` -> `&&`) folds it into a
- * conjunction so it is no longer a standalone operand, and a commented-out or
- * deleted clause is gone entirely — every such mutation fails here, unlike a
- * substring match.
+ * `archivedInstances.length > 0` is the ONLY true operand of each gate, so the
+ * archived bucket alone must decide whether the UI shows. The behavioral mount
+ * both this and Thufir preferred is not reachable from a test-file-only change:
+ * importing either gate's module transitively loads AgentSessionTranscriptList,
+ * which reads `import.meta.env.VITE_SHOW_TRANSCRIPT_ACP_SOURCE` at
+ * module-evaluation time and throws under the node test harness (no
+ * `import.meta.env`); shimming it would require editing the shared loader or
+ * that component, outside this change's boundary.
+ *
+ * So the two gates are pinned by EVALUATING each initializer under real
+ * JavaScript precedence for an all-archived owner-bot persona, rather than
+ * matching text or slicing operand strings. Comments are stripped and the named
+ * initializer is extracted, then every leaf sub-expression is substituted with
+ * its truth value for that persona — the owner/bot guards are true, the
+ * archived-bucket clause takes a parameter, and every other presence/content
+ * check is false — and the whole expression is evaluated with grouping and
+ * `&& || !` intact. The contract is the user-visible property: the gate shows
+ * the UI when the archived bucket is non-empty and hides it when the bucket is
+ * empty. This asserts semantics, not syntax, so it survives operand reordering
+ * and whole-operand parenthesisation, yet fails for any mutation that strands an
+ * all-archived persona — an operator swap (`||` -> `&&`), a deleted or
+ * commented-out clause, or a clause trapped inside a dead conjunction such as
+ * `false && (archivedInstances.length > 0)` or
+ * `(archivedInstances.length > 0 || false) && false`, all of which read as
+ * present to a text scanner but evaluate to a hidden UI.
  *
  * Coverage boundary: six prop handoffs (two buckets x three hops) + these two
  * visibility gates. ProfileInstancesSection is the terminal consumer and is
@@ -70,26 +81,54 @@ const initializerOf = (source, name) => {
   return rest.slice(0, end);
 };
 
-// True when the archived clause is one whole operand of the initializer's `||`
-// chain — not merely a substring. Each `||` operand is normalised before
-// comparison: drop any leading guard-and-open-paren prefix (the disjunction may
-// sit inside `guard && guard && ( ... )`, which otherwise glues onto the first
-// operand), strip whitespace, then drop the trailing `)` that closes the group.
-// A `||`->`&&` swap leaves the archived text welded to a neighbour by `&&` in
-// one operand, so no operand equals the clause alone; a deleted or
-// commented-out clause is gone entirely. Legitimate reordering keeps the clause
-// a standalone operand anywhere in the chain, so it still matches.
-const normalizeOperand = (operand) =>
-  operand
-    .slice(operand.lastIndexOf("(") + 1)
-    .replace(/\s+/g, "")
-    .replace(/\)+$/, "");
+// True when the archived bucket alone gates the UI for an all-archived owner-bot
+// persona: substitute each leaf of the initializer with its truth value for
+// that persona (owner/bot guards true; the archived clause takes `archived`;
+// every other presence/content check false), keep grouping and `&& || !`
+// intact, and evaluate under real JavaScript precedence. Text scanners miss the
+// precedence traps — `false && (clause)` or `(clause || false) && false` read
+// as present but evaluate dead — while a semantic evaluation catches them.
+const CLAUSE = "archivedInstances.length>0";
+const PERSONA_TRUE_LEAVES = new Set(["isOwner===true", "isBot"]);
 
-const isArchivedAwareDisjunct = (initializer) =>
-  initializer
-    .split("||")
-    .map(normalizeOperand)
-    .includes("archivedInstances.length>0");
+const evalUnderPersona = (initializer, archived) => {
+  const src = initializer.replace(/\s+/g, "");
+  let out = "";
+  let leaf = "";
+  const flush = () => {
+    if (leaf === "") return;
+    if (leaf === "true" || leaf === "false") out += leaf;
+    else if (leaf === CLAUSE) out += String(archived);
+    else out += PERSONA_TRUE_LEAVES.has(leaf) ? "true" : "false";
+    leaf = "";
+  };
+  for (let i = 0; i < src.length; i += 1) {
+    const pair = src.slice(i, i + 2);
+    if (pair === "&&" || pair === "||") {
+      flush();
+      out += pair;
+      i += 1;
+    } else if (src[i] === "(" || src[i] === ")") {
+      flush();
+      out += src[i];
+    } else if (src[i] === "!" && src[i + 1] !== "=") {
+      flush();
+      out += "!";
+    } else {
+      leaf += src[i];
+    }
+  }
+  flush();
+  // Guard against any leaf we failed to reduce leaking an identifier into the
+  // evaluated expression: after substitution only boolean tokens may remain.
+  assert.match(out, /^[a-z&|!()]+$/, `unreduced token in gate: ${out}`);
+  // eslint-disable-next-line no-new-func
+  return Function(`"use strict";return(${out});`)();
+};
+
+const archivedBucketGatesUi = (initializer) =>
+  evalUnderPersona(initializer, true) === true &&
+  evalUnderPersona(initializer, false) === false;
 
 const panelSource = await readCollapsed("UserProfilePanel.tsx");
 const sectionsSource = await readCollapsed("UserProfilePanelSections.tsx");
@@ -121,12 +160,12 @@ test("hop 3: ProfileRuntimeTabContent forwards both props to ProfileInstancesSec
   assert.match(tabsSource, /archivedInstances=\{archivedInstances\}/);
 });
 
-test("gate: showRuntimeTab keeps the archived bucket as a whole || operand", () => {
+test("gate: showRuntimeTab shows the Runtime tab for an all-archived persona", () => {
   assert.ok(
-    isArchivedAwareDisjunct(initializerOf(sectionsRaw, "showRuntimeTab")),
+    archivedBucketGatesUi(initializerOf(sectionsRaw, "showRuntimeTab")),
   );
 });
 
-test("gate: hasInstances keeps the archived bucket as a whole || operand", () => {
-  assert.ok(isArchivedAwareDisjunct(initializerOf(tabsRaw, "hasInstances")));
+test("gate: hasInstances renders the section for an all-archived persona", () => {
+  assert.ok(archivedBucketGatesUi(initializerOf(tabsRaw, "hasInstances")));
 });
