@@ -55,6 +55,7 @@ export function VideoReviewTimecodeButton({
   );
 }
 
+/** Renders a non-interactive timecode with the same visual treatment. */
 export function VideoReviewTimecodeChip({
   className,
   surface = "review",

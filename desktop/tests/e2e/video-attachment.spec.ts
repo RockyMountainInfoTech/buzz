@@ -924,7 +924,7 @@ test("video replies in threads open the review comments view", async ({
   const reviewComment = (await emitMockMessage(
     page,
     "general",
-    "[00:01] Tighten this transition.",
+    "[00:01] > Tighten this transition.",
     { parentEventId: videoReply.id },
   )) as {
     content: string;
@@ -997,6 +997,9 @@ test("video replies in threads open the review comments view", async ({
   await expect(outsideTimecode.locator("xpath=ancestor::p")).toContainText(
     "Tighten this transition.",
   );
+  await expect(
+    outsideTimecode.locator("xpath=ancestor::blockquote"),
+  ).toBeVisible();
   const outsideTimecodeStyles = await outsideTimecode.evaluate((element) => {
     const styles = window.getComputedStyle(element);
     return {
@@ -1067,6 +1070,9 @@ test("video replies in threads open the review comments view", async ({
   await expect(inboxPreviewTimecode.locator("xpath=ancestor::p")).toContainText(
     "Tighten this transition.",
   );
+  await expect(
+    inboxPreviewTimecode.locator("xpath=ancestor::blockquote"),
+  ).toBeVisible();
   await inboxRow.click();
 
   const inboxDetail = page.getByTestId("home-inbox-detail");
@@ -1077,6 +1083,9 @@ test("video replies in threads open the review comments view", async ({
   await expect(inboxDetailTimecode.locator("xpath=ancestor::p")).toContainText(
     "Tighten this transition.",
   );
+  await expect(
+    inboxDetailTimecode.locator("xpath=ancestor::blockquote"),
+  ).toBeVisible();
   await inboxDetailTimecode.click();
   await expect(page.getByTestId("video-review-dialog")).toBeVisible();
 });
