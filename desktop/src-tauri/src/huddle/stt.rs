@@ -61,15 +61,11 @@ pub struct SttPipeline {
 impl SttPipeline {
     /// Spawn the pipeline thread.
     ///
-    /// `tts_active` is a shared flag set by the TTS pipeline while audio is
-    /// playing. The STT worker uses it to:
-    ///   - discard accumulated speech so local playback cannot feed back into STT
-    ///   - apply a cooldown after TTS stops before re-enabling STT
-    ///
-    /// Open-mic VAD cannot distinguish a nearby human from the app's own native
-    /// TTS playback because it has no acoustic echo reference. Local mic frames
-    /// therefore never cancel TTS. Push-to-talk and remote participant speech
-    /// remain explicit, reliable barge-in paths.
+    /// Mic input is transcribed even while agent TTS is playing: the huddle UI
+    /// already tells users to wear headphones, so speaker bleed is accepted in
+    /// exchange for never dropping human speech that overlaps agent audio.
+    /// Local mic frames still never cancel TTS — push-to-talk and remote
+    /// participant speech remain the explicit barge-in paths.
     ///
     /// `ptt_active` and `manual_mic_unmuted` are present when the PTT shortcut
     /// is enabled. The pipeline accepts speech while either input path is open;
@@ -86,7 +82,6 @@ impl SttPipeline {
     /// thread on every `recv_timeout` call).
     pub fn new(
         model_dir: PathBuf,
-        tts_active: Arc<AtomicBool>,
         ptt_active: Option<Arc<AtomicBool>>,
         manual_mic_unmuted: Option<Arc<AtomicBool>>,
     ) -> Result<(Self, tokio_mpsc::Receiver<String>), String> {
@@ -105,7 +100,6 @@ impl SttPipeline {
                     audio_rx,
                     text_tx,
                     shutdown_worker,
-                    tts_active,
                     ptt_active_worker,
                     manual_mic_unmuted_worker,
                 )
@@ -188,12 +182,6 @@ const MIN_VOICED_FRAMES: usize = 12;
 /// How long the worker waits on the audio channel before checking the shutdown flag.
 const RECV_TIMEOUT: Duration = Duration::from_millis(50);
 
-/// 150 ms cooldown after TTS stops before STT re-enables.
-/// Prevents the tail of TTS audio from being transcribed as speech.
-/// This remains shorter than the previous 200 ms gate that ate the first word,
-/// but is long enough for speaker/AEC tail audio to leave the microphone path.
-const TTS_COOLDOWN: Duration = Duration::from_millis(150);
-
 /// Number of ONNX Runtime intra-op threads used by the offline recognizer.
 ///
 /// Held at 1 (conservative) until we have a local A/B on real huddle audio.
@@ -230,7 +218,6 @@ fn stt_worker(
     audio_rx: Receiver<Vec<u8>>,
     text_tx: tokio_mpsc::Sender<String>,
     shutdown: Arc<AtomicBool>,
-    tts_active: Arc<AtomicBool>,
     ptt_active: Option<Arc<AtomicBool>>,
     manual_mic_unmuted: Option<Arc<AtomicBool>>,
 ) {
@@ -300,8 +287,6 @@ fn stt_worker(
     let mut in_speech = false;
     // Number of frames earshot classified as voiced in the current segment.
     let mut voiced_frames = 0;
-    // Timestamp when TTS last stopped — used for the playback-tail cooldown.
-    let mut tts_stopped_at: Option<std::time::Instant> = None;
     // Silence flush window (frames) — fixed at the production value.
     let flush_frames = SILENCE_FLUSH_FRAMES;
     // EXPERIMENTAL: speculative decode result + the voiced-frame count it was
@@ -310,7 +295,6 @@ fn stt_worker(
     let mut speculative: Option<(String, usize)> = None;
 
     // ── 5. Main loop ──────────────────────────────────────────────────────────
-    let mut tts_was_active = false;
     let mut transmit_was_active = ptt_active
         .as_ref()
         .is_some_and(|ptt| ptt.load(Ordering::Acquire))
@@ -322,14 +306,6 @@ fn stt_worker(
         if shutdown.load(Ordering::Acquire) {
             break;
         }
-
-        // Track TTS transitions to set the cooldown timer.
-        let tts_now = tts_active.load(Ordering::Acquire);
-        if tts_was_active && !tts_now {
-            // TTS just stopped — record the timestamp for the cooldown window.
-            tts_stopped_at = Some(std::time::Instant::now());
-        }
-        tts_was_active = tts_now;
 
         // Track the combined manual/PTT transmission edge. When both paths
         // close, the worklet stops sending frames, so flush here rather than
@@ -383,8 +359,6 @@ fn stt_worker(
                     (speculative_enabled, &mut speculative),
                     &recognizer,
                     &text_tx,
-                    &tts_active,
-                    &mut tts_stopped_at,
                     ptt_active.as_ref(),
                     manual_mic_unmuted.as_ref(),
                 );
@@ -424,10 +398,9 @@ fn resample_chunk(resampler: &mut rubato::Fft<f32>, chunk_48k: &[f32]) -> Vec<f3
 /// Feed 16 kHz samples through the VAD and accumulate speech.
 /// Flushes to STT when silence exceeds threshold.
 ///
-/// When `tts_active` is set:
-///   - Discard all local mic input so native playback cannot trigger itself.
-///   - In PTT mode, the shortcut handler remains the explicit cancellation path.
-///   - After TTS stops, a cooldown prevents tail audio from being transcribed.
+/// Mic input keeps flowing while agent TTS plays: the huddle UI instructs
+/// users to wear headphones, so overlapping human speech is transcribed
+/// instead of discarded.
 ///
 /// When `ptt_active` is `Some`, input is accepted while either the shortcut is
 /// held or the microphone is manually unmuted. A held shortcut is an explicit
@@ -448,8 +421,6 @@ fn process_16k_samples(
     speculative: (bool, &mut Option<(String, usize)>),
     recognizer: &sherpa_onnx::OfflineRecognizer,
     text_tx: &tokio_mpsc::Sender<String>,
-    tts_active: &Arc<AtomicBool>,
-    tts_stopped_at: &mut Option<std::time::Instant>,
     ptt_active: Option<&Arc<AtomicBool>>,
     manual_mic_unmuted: Option<&Arc<AtomicBool>>,
 ) {
@@ -475,41 +446,6 @@ fn process_16k_samples(
         // the utterance while it is held. VAD pause flushing applies in pure
         // VAD mode, or with a manually open mic once the shortcut is up.
         let vad_flush_allowed = vad_flush_allowed(ptt_active.is_some(), manually_open, ptt_held);
-
-        let tts_playing = tts_active.load(Ordering::Acquire);
-
-        // While TTS is playing, discard local mic input. The native TTS output
-        // is not available as an echo-cancellation reference to this worker, so
-        // VAD cannot reliably tell speaker feedback from a human interruption.
-        // Push-to-talk and remote participant audio provide the intentional
-        // cancellation paths instead.
-        if tts_playing {
-            *in_speech = false;
-            speech_buf.clear();
-            *silence_frames = 0;
-            *voiced_frames = 0;
-            continue;
-        }
-
-        // TTS not playing — check cooldown window.
-        if let Some(stopped) = *tts_stopped_at {
-            if stopped.elapsed() < TTS_COOLDOWN {
-                // Still in cooldown — discard but keep tracking speech state.
-                if !is_speech {
-                    *in_speech = false;
-                }
-                speech_buf.clear();
-                *silence_frames = 0;
-                *voiced_frames = 0;
-                continue;
-            } else {
-                // Cooldown expired — clear the timer and reset all segment state.
-                *tts_stopped_at = None;
-                *in_speech = false;
-                *silence_frames = 0;
-                *voiced_frames = 0;
-            }
-        }
 
         if is_speech {
             *silence_frames = 0;
