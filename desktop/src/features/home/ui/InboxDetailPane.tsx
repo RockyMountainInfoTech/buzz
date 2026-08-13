@@ -38,7 +38,10 @@ import { orderMentionPubkeysByText } from "@/features/messages/lib/orderMentionP
 import { canManageMessageForCurrentUser } from "@/features/messages/lib/canManageMessage";
 import { buildEditMentionState } from "@/features/messages/lib/draftMentionRefs";
 import { imetaMediaFromTags } from "@/features/messages/lib/imetaMediaMarkdown";
-import { buildVideoReviewPresentationByMessageId } from "@/features/messages/lib/videoReviewContext";
+import {
+  buildVideoReviewPresentationByMessageId,
+  hasRenderedVideoAttachment,
+} from "@/features/messages/lib/videoReviewContext";
 import { getThreadReference } from "@/features/messages/lib/threading";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { MessageComposer } from "@/features/messages/ui/MessageComposer";
@@ -310,18 +313,21 @@ function InboxMessageDetailPane({
   );
   const videoReviewPresentation = React.useMemo(
     () =>
-      buildVideoReviewPresentationByMessageId({
-        channelId: item?.item.channelId,
-        channelName: contextChannelName ?? item?.channelLabel ?? undefined,
-        channelType: videoReviewChannelType,
-        isSendingVideoReviewComment: isSendingReply,
-        messages: videoReviewMessages,
-        onSendVideoReviewComment: canReply
-          ? handleSendVideoReviewComment
-          : undefined,
-        onToggleReaction,
-        profiles,
-      }),
+      buildVideoReviewPresentationByMessageId(
+        {
+          channelId: item?.item.channelId,
+          channelName: contextChannelName ?? item?.channelLabel ?? undefined,
+          channelType: videoReviewChannelType,
+          isSendingVideoReviewComment: isSendingReply,
+          messages: videoReviewMessages,
+          onSendVideoReviewComment: canReply
+            ? handleSendVideoReviewComment
+            : undefined,
+          onToggleReaction,
+          profiles,
+        },
+        hasRenderedVideoAttachment,
+      ),
     [
       canReply,
       contextChannelName,

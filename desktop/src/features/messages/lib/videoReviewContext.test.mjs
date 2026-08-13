@@ -269,6 +269,39 @@ test("buildVideoReviewCommentRootIdsByMessageId targets the nearest video ancest
   );
 });
 
+test("buildVideoReviewCommentRootIdsByMessageId can require rendered video roots", () => {
+  const orphanVideo = message({
+    id: "orphan-video",
+    body: "metadata only",
+    tags: [["imeta", "url https://relay/media/a.mp4", "m video/mp4"]],
+  });
+  const comment = message({
+    id: "comment",
+    body: "[00:01] review this",
+    parentId: orphanVideo.id,
+    rootId: orphanVideo.id,
+  });
+
+  assert.deepEqual(
+    [
+      ...buildVideoReviewCommentRootIdsByMessageId([
+        orphanVideo,
+        comment,
+      ]).entries(),
+    ],
+    [[comment.id, orphanVideo.id]],
+  );
+  assert.deepEqual(
+    [
+      ...buildVideoReviewCommentRootIdsByMessageId(
+        [orphanVideo, comment],
+        hasRenderedVideoAttachment,
+      ).entries(),
+    ],
+    [],
+  );
+});
+
 test("buildVideoReviewContextForMessage posts against the source video", async () => {
   const video = message({
     id: "video",

@@ -21,6 +21,10 @@ type ToggleMessageReaction = (
   remove: boolean,
 ) => Promise<void>;
 
+type VideoRootPredicate = (
+  message: Pick<TimelineMessage, "body" | "tags">,
+) => boolean;
+
 type MarkdownAstNode = {
   children?: MarkdownAstNode[];
   identifier?: string;
@@ -156,10 +160,11 @@ export function buildVideoReviewCommentsForRoot(
 
 export function buildVideoReviewCommentRootIdsByMessageId(
   messages: TimelineMessage[],
+  videoRootPredicate: VideoRootPredicate = hasVideoAttachment,
 ): ReadonlyMap<string, string> {
   const messageById = new Map(messages.map((message) => [message.id, message]));
   const videoMessageIds = new Set(
-    messages.filter(hasVideoAttachment).map((message) => message.id),
+    messages.filter(videoRootPredicate).map((message) => message.id),
   );
   const rootIdsByMessageId = new Map<string, string>();
 
@@ -191,6 +196,7 @@ export function buildVideoReviewContextForMessage({
   onSendVideoReviewComment,
   onToggleReaction,
   profiles,
+  videoRootPredicate = hasVideoAttachment,
 }: {
   channelId?: string | null;
   channelName?: string;
@@ -201,8 +207,9 @@ export function buildVideoReviewContextForMessage({
   onSendVideoReviewComment?: SendVideoReviewComment;
   onToggleReaction?: ToggleMessageReaction;
   profiles?: UserProfileLookup;
+  videoRootPredicate?: VideoRootPredicate;
 }): VideoReviewContext | undefined {
-  if (!hasVideoAttachment(message)) {
+  if (!videoRootPredicate(message)) {
     return undefined;
   }
 
@@ -246,6 +253,7 @@ export function buildVideoReviewContextsByMessageId({
   onSendVideoReviewComment,
   onToggleReaction,
   profiles,
+  videoRootPredicate = hasVideoAttachment,
 }: {
   channelId?: string | null;
   channelName?: string;
@@ -255,9 +263,10 @@ export function buildVideoReviewContextsByMessageId({
   onSendVideoReviewComment?: SendVideoReviewComment;
   onToggleReaction?: ToggleMessageReaction;
   profiles?: UserProfileLookup;
+  videoRootPredicate?: VideoRootPredicate;
 }): ReadonlyMap<string, VideoReviewContext> {
   const contexts = new Map<string, VideoReviewContext>();
-  if (!messages.some(hasVideoAttachment)) {
+  if (!messages.some(videoRootPredicate)) {
     return contexts;
   }
 
@@ -273,6 +282,7 @@ export function buildVideoReviewContextsByMessageId({
       onSendVideoReviewComment,
       onToggleReaction,
       profiles,
+      videoRootPredicate,
     });
     if (context) {
       contexts.set(message.id, context);
@@ -289,12 +299,17 @@ export function buildVideoReviewContextsByMessageId({
  */
 export function buildVideoReviewPresentationByMessageId(
   args: Parameters<typeof buildVideoReviewContextsByMessageId>[0],
+  videoRootPredicate: VideoRootPredicate = hasVideoAttachment,
 ) {
   return {
     commentRootIdsByMessageId: buildVideoReviewCommentRootIdsByMessageId(
       args.messages,
+      videoRootPredicate,
     ),
-    contextsByMessageId: buildVideoReviewContextsByMessageId(args),
+    contextsByMessageId: buildVideoReviewContextsByMessageId({
+      ...args,
+      videoRootPredicate,
+    }),
   };
 }
 
