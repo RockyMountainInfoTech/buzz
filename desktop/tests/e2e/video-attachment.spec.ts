@@ -1128,7 +1128,7 @@ test("Inbox preserves bracketed timestamps without video evidence", async ({
   ).toHaveCount(0);
 });
 
-test("Inbox recognizes extension-based video ancestors with custom alt text", async ({
+test("Inbox recognizes reference-style video ancestors with custom alt text", async ({
   page,
 }) => {
   await installVideoReviewHarness(page);
@@ -1146,7 +1146,7 @@ test("Inbox recognizes extension-based video ancestors with custom alt text", as
   const video = (await emitMockMessage(
     page,
     "general",
-    `![Launch demo](${VIDEO_URL})`,
+    `![Launch demo][cut]\n\n[cut]: ${VIDEO_URL}`,
     { parentEventId: root.id },
   )) as MockFeedMessage;
   const comment = (await emitMockMessage(

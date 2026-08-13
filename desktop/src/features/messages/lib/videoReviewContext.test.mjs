@@ -83,6 +83,22 @@ test("hasVideoAttachment uses the Markdown renderer's video classification", () 
     ),
     false,
   );
+  assert.equal(
+    hasVideoAttachment(
+      message({
+        body: "![Demo][clip]\n\n[clip]: https://cdn.example.com/cut.mp4",
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    hasVideoAttachment(
+      message({
+        body: "```md\n![Demo](https://cdn.example.com/cut.mp4)\n```",
+      }),
+    ),
+    false,
+  );
 });
 
 test("buildVideoReviewCommentsByRootId includes nested descendants", () => {

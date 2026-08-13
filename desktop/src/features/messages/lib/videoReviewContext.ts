@@ -1,3 +1,5 @@
+import { fromMarkdown } from "mdast-util-from-markdown";
+
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { ChannelType } from "@/shared/api/types";
@@ -19,8 +21,43 @@ type ToggleMessageReaction = (
   remove: boolean,
 ) => Promise<void>;
 
-const MARKDOWN_IMAGE_RE =
-  /!\[(?:\\.|[^\]\\])*\]\(\s*(?:<([^>\r\n]+)>|([^\s)]+))[^\r\n)]*\)/g;
+type MarkdownAstNode = {
+  children?: MarkdownAstNode[];
+  identifier?: string;
+  type: string;
+  url?: string;
+};
+
+function markdownImageUrls(body: string): string[] {
+  if (!body.includes("![")) return [];
+
+  const definitions = new Map<string, string>();
+  const directUrls: string[] = [];
+  const referenceIds: string[] = [];
+
+  const visit = (node: MarkdownAstNode) => {
+    if (node.type === "definition" && node.identifier && node.url) {
+      if (!definitions.has(node.identifier)) {
+        definitions.set(node.identifier, node.url);
+      }
+    } else if (node.type === "image" && node.url) {
+      directUrls.push(node.url);
+    } else if (node.type === "imageReference" && node.identifier) {
+      referenceIds.push(node.identifier);
+    }
+
+    node.children?.forEach(visit);
+  };
+
+  visit(fromMarkdown(body) as MarkdownAstNode);
+  return [
+    ...directUrls,
+    ...referenceIds.flatMap((identifier) => {
+      const url = definitions.get(identifier);
+      return url ? [url] : [];
+    }),
+  ];
+}
 
 export function hasVideoAttachment(
   message: Pick<TimelineMessage, "body" | "tags">,
@@ -32,9 +69,8 @@ export function hasVideoAttachment(
     return true;
   }
 
-  for (const match of message.body.matchAll(MARKDOWN_IMAGE_RE)) {
-    const src = match[1] ?? match[2];
-    if (src && isVideoMedia(src, imetaByUrl.get(src)?.m)) return true;
+  for (const src of markdownImageUrls(message.body)) {
+    if (isVideoMedia(src, imetaByUrl.get(src)?.m)) return true;
   }
 
   return false;
@@ -232,6 +268,11 @@ export function buildVideoReviewContextsByMessageId({
   return contexts;
 }
 
+/**
+ * Builds the paired video-review maps used by timeline presentation: contexts
+ * are keyed by video message, while comment roots map each descendant back to
+ * its nearest video ancestor.
+ */
 export function buildVideoReviewPresentationByMessageId(
   args: Parameters<typeof buildVideoReviewContextsByMessageId>[0],
 ) {
@@ -243,6 +284,7 @@ export function buildVideoReviewPresentationByMessageId(
   };
 }
 
+/** The synchronized context and comment-root maps for a rendered timeline. */
 export type VideoReviewPresentation = ReturnType<
   typeof buildVideoReviewPresentationByMessageId
 >;
