@@ -48,6 +48,41 @@ void main() {
     expect(container.read(pendingDeepLinkProvider), isNull);
   });
 
+  testWidgets('drops a missing channel and dispatches the next queued link', (
+    tester,
+  ) async {
+    const missing = ChannelDeepLink(channelId: 'missing-channel');
+    const next = ChannelDeepLink(channelId: 'channel-1');
+    final pending = _QueuedPendingDeepLinkNotifier([missing, next]);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          pendingDeepLinkProvider.overrideWith(() => pending),
+          channelsProvider.overrideWith(
+            () => _FakeChannelsNotifier(Future.value([_channel])),
+          ),
+        ],
+        child: MaterialApp(
+          home: DeepLinkDispatcher(
+            destinationBuilder: (channel, link) =>
+                _CapturedDestination(channel: channel, link: link),
+            child: const Scaffold(body: SizedBox()),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(pending.consumeCalls, 2);
+    final destination = tester.widget<_CapturedDestination>(
+      find.byType(_CapturedDestination),
+    );
+    expect(destination.channel.id, 'channel-1');
+    expect(destination.link, same(next));
+  });
+
   testWidgets('dispatches a link that is already ready on mount', (
     tester,
   ) async {
@@ -289,6 +324,26 @@ class _ThrowingCommunityStorage extends CommunityStorage {
   @override
   Future<List<Community>> loadAll() async {
     throw StateError('secure storage unavailable');
+  }
+}
+
+class _QueuedPendingDeepLinkNotifier extends PendingDeepLinkNotifier {
+  _QueuedPendingDeepLinkNotifier(List<BuzzDeepLink> links)
+    : _links = List.of(links);
+
+  final List<BuzzDeepLink> _links;
+  int consumeCalls = 0;
+
+  BuzzDeepLink? get _firstOrNull => _links.isEmpty ? null : _links.first;
+
+  @override
+  BuzzDeepLink? build() => _firstOrNull;
+
+  @override
+  void consume() {
+    consumeCalls++;
+    _links.removeAt(0);
+    state = _firstOrNull;
   }
 }
 
