@@ -72,6 +72,16 @@ const STUB_URL_PREFIX = "buzz-test-stub:";
 const ASSET_SPECIFIER = /\.(?:png|jpe?g|gif|svg|webp|avif|ico)(?:\?[^/]*)?$/;
 const ASSET_URL_PREFIX = "buzz-test-asset:";
 
+// Vite injects `import.meta.env` at bundle time; under node's ESM loader it is
+// undefined, so any module that reads `import.meta.env.VITE_*` at evaluation
+// time (e.g. AgentSessionTranscriptList's VITE_SHOW_TRANSCRIPT_ACP_SOURCE)
+// throws on import. Prepend a general shim to every transpiled module: define
+// `import.meta.env` only when unset, as an object that answers `undefined` for
+// unset keys and reports the non-dev/non-e2e build the app defaults to. This is
+// the vite build shape, not a one-off for a single variable.
+const IMPORT_META_ENV_SHIM =
+  'if (import.meta.env === undefined) { import.meta.env = { DEV: false, PROD: true, MODE: "test", SSR: false }; }\n';
+
 export function resolve(specifier, context, nextResolve) {
   if (ASSET_SPECIFIER.test(specifier)) {
     return {
@@ -178,7 +188,7 @@ export async function load(url, context, nextLoad) {
     return {
       format: "module",
       shortCircuit: true,
-      source: transpiled.outputText,
+      source: IMPORT_META_ENV_SHIM + transpiled.outputText,
     };
   }
 
