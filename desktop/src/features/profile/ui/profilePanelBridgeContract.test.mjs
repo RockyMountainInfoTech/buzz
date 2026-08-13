@@ -15,6 +15,20 @@ import test from "node:test";
  * consumes the single composition and maps both buckets, and each intermediate
  * component forwards both props onward. Replacing any hop's mapping with `[]`
  * fails here even though every behavioral test stays green.
+ *
+ * Correct forwarding is only reachable if the two archived-aware visibility
+ * gates in that same path stay archived-aware, so this also pins them: the
+ * `showRuntimeTab` gate (ProfileSummaryView) that decides whether the Runtime
+ * tab renders, and the `hasInstances` gate (ProfileRuntimeTabContent) that
+ * decides whether ProfileInstancesSection renders. Dropping the
+ * `archivedInstances.length > 0` clause from either strands an all-archived
+ * persona, and that mutation fails here.
+ *
+ * Coverage boundary: six prop handoffs (two buckets x three hops) + these two
+ * visibility gates. ProfileInstancesSection is the terminal consumer and is
+ * covered behaviorally by ProfileInstancesArchived.test.mjs. Together these are
+ * the complete set of archived-aware expressions in the shipping chain — the
+ * four chain files hold no other archived-aware condition outside them.
  */
 const collapse = (source) => source.replace(/\s+/g, " ");
 
@@ -48,4 +62,18 @@ test("hop 2: ProfileSummaryView forwards both props to ProfileRuntimeTabContent"
 test("hop 3: ProfileRuntimeTabContent forwards both props to ProfileInstancesSection", () => {
   assert.match(tabsSource, /instances=\{instances\}/);
   assert.match(tabsSource, /archivedInstances=\{archivedInstances\}/);
+});
+
+test("gate: showRuntimeTab keeps the archived bucket in its enablement", () => {
+  assert.match(
+    sectionsSource,
+    /showRuntimeTab = [^;]*archivedInstances\.length > 0/,
+  );
+});
+
+test("gate: hasInstances keeps the archived bucket in its enablement", () => {
+  assert.match(
+    tabsSource,
+    /hasInstances = instances\.length > 0 \|\| archivedInstances\.length > 0;/,
+  );
 });
