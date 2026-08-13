@@ -6,6 +6,7 @@ import {
   prepareBackgroundLinkPreviews,
   prepareLinkPreview,
   resetLinkPreviewPreparations,
+  skipBackgroundLinkPreviews,
 } from "./linkPreviewPreparationStore.ts";
 
 const first = { href: "https://example.com/first" };
@@ -172,6 +173,31 @@ test("Skip wins completion and resolves exactly once", async () => {
   pending.resolve(firstTag);
 
   assert.deepEqual(await preparation.promise, { status: "ready", tags: [] });
+});
+
+test("Skip only settles the latest concurrent preparation", async () => {
+  const firstPending = deferred();
+  const secondPending = deferred();
+  seed(first, firstPending.promise);
+  seed(second, secondPending.promise);
+
+  const firstPreparation = prepareBackgroundLinkPreviews([first], 1_000);
+  const secondPreparation = prepareBackgroundLinkPreviews([second], 1_000);
+  assert.ok(firstPreparation);
+  assert.ok(secondPreparation);
+
+  skipBackgroundLinkPreviews();
+  firstPending.resolve(firstTag);
+  secondPending.resolve(["link-preview", "snapshot", second.href]);
+
+  assert.deepEqual(await secondPreparation.promise, {
+    status: "ready",
+    tags: [],
+  });
+  assert.deepEqual(await firstPreparation.promise, {
+    status: "ready",
+    tags: [firstTag],
+  });
 });
 
 test("Skip after completion cannot replace finalized tags", async () => {

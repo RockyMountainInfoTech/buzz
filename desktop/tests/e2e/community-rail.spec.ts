@@ -378,6 +378,55 @@ test.describe("community rail", () => {
       .toBe(COMMUNITY_B.id);
   });
 
+  test("community switch cancels a pending link-preview send", async ({
+    page,
+  }) => {
+    await installMockBridge(
+      page,
+      {
+        linkPreviewMetadata: {
+          title: "Pending preview",
+          siteName: "GitHub",
+          description: "Must not cross community boundaries.",
+          imageDataUrl: null,
+          imageDomain: null,
+        },
+        linkPreviewMetadataDelayMs: 10_000,
+      },
+      { skipCommunitySeed: true },
+    );
+    await seedCommunities(page, [COMMUNITY_A, COMMUNITY_B], COMMUNITY_A.id);
+    await page.goto("/");
+    await page.getByTestId("channel-general").click();
+
+    const previewUrl =
+      "https://github.com/block/buzz/pull/5697?community=reset";
+    await page.getByTestId("message-input").fill(previewUrl);
+    await page.getByTestId("message-input").press("Enter");
+    await expect(page.getByTestId("composer-upload-cancel")).toBeVisible();
+
+    await page.getByTestId(`community-rail-button-${COMMUNITY_B.id}`).click();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.localStorage.getItem("buzz-active-community-id"),
+        ),
+      )
+      .toBe(COMMUNITY_B.id);
+    await page.waitForTimeout(250);
+
+    const publications = await page.evaluate(() =>
+      (window.__BUZZ_E2E_COMMAND_PAYLOADS__ ?? []).filter(
+        (entry) => entry.command === "send_channel_message",
+      ),
+    );
+    expect(publications).toHaveLength(0);
+
+    await page.getByTestId(`community-rail-button-${COMMUNITY_A.id}`).click();
+    await page.getByTestId("channel-general").click();
+    await expect(page.getByTestId("message-input")).toHaveText("");
+  });
+
   test("restores the last Home or channel destination per community", async ({
     page,
   }) => {

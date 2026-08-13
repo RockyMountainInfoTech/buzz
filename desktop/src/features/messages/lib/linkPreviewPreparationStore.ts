@@ -243,7 +243,13 @@ export function prepareBackgroundLinkPreviews(
 }
 
 export function skipBackgroundLinkPreviews(): void {
-  for (const task of [...tasks.values()]) task.skip();
+  const latestTask = [...tasks.values()].reduce<
+    BackgroundPreviewTask | undefined
+  >(
+    (latest, task) => (!latest || task.id > latest.id ? task : latest),
+    undefined,
+  );
+  latestTask?.skip();
 }
 
 export function resetLinkPreviewPreparations(): void {
