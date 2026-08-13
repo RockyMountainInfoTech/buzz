@@ -37,6 +37,8 @@ type DiagnosticStage =
 type DiagnosticMediaOutcome =
   | "pending"
   | "not-provided"
+  | "fetch-transient"
+  | "fetch-rejected"
   | "invalid-data-url"
   | "uploaded"
   | "upload-failed";
@@ -211,6 +213,14 @@ async function buildSnapshot(
     return null;
   }
   updateDiagnostic(candidate.href, {
+    favicon: preview.faviconDataUrl ? "pending" : "not-provided",
+    image: preview.imageDataUrl
+      ? "pending"
+      : metadata.imageFetchState === "transient_failure"
+        ? "fetch-transient"
+        : metadata.imageFetchState === "rejected"
+          ? "fetch-rejected"
+          : "not-provided",
     metadata: "ready",
     stage: "metadata-ready",
   });
@@ -231,7 +241,19 @@ async function buildSnapshot(
   onMetadataReady(fallbackTag);
   updateDiagnostic(candidate.href, { stage: "uploading-media" });
   const [image, favicon] = await Promise.all([
-    uploadDataUrl(preview.imageDataUrl, "link-preview-image.png"),
+    preview.imageDataUrl
+      ? uploadDataUrl(preview.imageDataUrl, "link-preview-image.png")
+      : Promise.resolve<UploadResult>({
+          failed: false,
+          outcome:
+            metadata.imageFetchState === "transient_failure"
+              ? "fetch-transient"
+              : metadata.imageFetchState === "rejected"
+                ? "fetch-rejected"
+                : "not-provided",
+          sha256: "",
+          url: "",
+        }),
     uploadDataUrl(preview.faviconDataUrl, "link-preview-favicon.png"),
   ]);
   const uploadFailed = image.failed || favicon.failed;

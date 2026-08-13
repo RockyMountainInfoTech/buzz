@@ -33,6 +33,8 @@ function mediaReason(
     return "timed-out-pending";
   }
   if (outcome === "not-provided") return "metadata-no-media";
+  if (outcome === "fetch-transient") return "fetch-transient-after-retry";
+  if (outcome === "fetch-rejected") return "fetch-rejected";
   return outcome;
 }
 
