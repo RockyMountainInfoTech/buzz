@@ -105,6 +105,43 @@ void main() {
     );
   });
 
+  test('queryRelay rotates the client after a timeout', () async {
+    final clients = <_ControlledHttpClient>[];
+    final session = RelaySessionNotifier(
+      httpClientFactory: () {
+        final client = _ControlledHttpClient();
+        clients.add(client);
+        return client;
+      },
+    );
+    final container = ProviderContainer(
+      overrides: [
+        relaySessionProvider.overrideWith(() => session),
+        relayConfigProvider.overrideWith(
+          () => _FakeRelayConfigNotifier(
+            baseUrl: 'https://relay.example',
+            nsec: nostr.Keys.generate().nsec,
+          ),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    container.read(relaySessionProvider);
+
+    await expectLater(
+      session.queryRelay(const [], timeout: Duration.zero),
+      throwsA(isA<TimeoutException>()),
+    );
+    expect(clients.single.closed, isTrue);
+
+    final nextQuery = session.queryRelay(const []);
+    expect(clients, hasLength(2));
+    clients.last.complete(http.Response('[]', 200));
+
+    expect(await nextQuery, isEmpty);
+    expect(clients.last.closed, isFalse);
+  });
+
   test('queryRelay arms the rate-limit gate from a 429 retry hint', () async {
     final gateTimers = <_ManualTimer>[];
     final gate = RelayRateLimitGate(
@@ -1206,6 +1243,30 @@ void main() {
     expect(closedMessages, ['restricted: no longer valid']);
     unsubscribe();
   });
+}
+
+class _ControlledHttpClient extends http.BaseClient {
+  final _response = Completer<http.StreamedResponse>();
+  bool closed = false;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) =>
+      _response.future;
+
+  void complete(http.Response response) {
+    _response.complete(
+      http.StreamedResponse(
+        Stream.value(response.bodyBytes),
+        response.statusCode,
+        headers: response.headers,
+        reasonPhrase: response.reasonPhrase,
+        request: response.request,
+      ),
+    );
+  }
+
+  @override
+  void close() => closed = true;
 }
 
 class _QueryHarness {

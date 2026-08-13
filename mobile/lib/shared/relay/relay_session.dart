@@ -88,12 +88,14 @@ typedef RelaySocketFactory =
 class RelaySessionNotifier extends Notifier<SessionState> {
   RelaySessionNotifier({
     http.Client? httpClient,
+    http.Client Function()? httpClientFactory,
     RelaySocketFactory socketFactory = RelaySocket.new,
     DateTime Function()? now,
     RelayRateLimitGate? rateLimitGate,
     RelayTimerFactory retryTimerFactory = Timer.new,
     Future<void> Function(Duration) replayDelay = Future.delayed,
   }) : _injectedHttpClient = httpClient,
+       _httpClientFactory = httpClientFactory ?? (() => http.Client()),
        _socketFactory = socketFactory,
        _now = now ?? DateTime.now,
        _rateLimitGate = rateLimitGate ?? RelayRateLimitGate(),
@@ -102,6 +104,7 @@ class RelaySessionNotifier extends Notifier<SessionState> {
 
   final http.Client? _injectedHttpClient;
   http.Client? _ownedHttpClient;
+  final http.Client Function() _httpClientFactory;
   final RelaySocketFactory _socketFactory;
   final DateTime Function() _now;
   final RelayRateLimitGate _rateLimitGate;
@@ -171,23 +174,34 @@ class RelaySessionNotifier extends Notifier<SessionState> {
     );
     // Keep one transport for the session so repeated channel-window and feed
     // reads reuse their TLS connection instead of handshaking on every query.
-    // Provider rebuilds dispose the owned client and lazily create a fresh one.
-    final client = _injectedHttpClient ?? (_ownedHttpClient ??= http.Client());
-    final response = await client
-        .post(
-          Uri.parse(url),
-          headers: {
-            'Authorization': buildNip98AuthHeader(
-              method: 'POST',
-              url: url,
-              bodyBytes: bodyBytes,
-              nsec: config.nsec,
-            ),
-            'Content-Type': 'application/json',
-          },
-          body: bodyBytes,
-        )
-        .timeout(timeout);
+    // A timeout closes and rotates the transport because Future.timeout does
+    // not cancel the underlying request.
+    final client =
+        _injectedHttpClient ?? (_ownedHttpClient ??= _httpClientFactory());
+    late final http.Response response;
+    try {
+      response = await client
+          .post(
+            Uri.parse(url),
+            headers: {
+              'Authorization': buildNip98AuthHeader(
+                method: 'POST',
+                url: url,
+                bodyBytes: bodyBytes,
+                nsec: config.nsec,
+              ),
+              'Content-Type': 'application/json',
+            },
+            body: bodyBytes,
+          )
+          .timeout(timeout);
+    } on TimeoutException {
+      if (identical(_ownedHttpClient, client)) {
+        client.close();
+        _ownedHttpClient = null;
+      }
+      rethrow;
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       _activateRateLimitGateFromHttpError(response.body);
       throw RelayException(response.statusCode, response.body);
