@@ -346,11 +346,13 @@ test("mixed Buzz permalinks render as chips in the composer", async ({
 
   const channelId = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
   const owner = "a".repeat(64);
+  const pullRequestId = "c".repeat(64);
   const issueId = "b".repeat(64);
   const links = [
     `buzz://message?channel=${channelId}&id=mock-general-welcome`,
     `buzz://channel/${channelId}`,
     `buzz://repo?owner=${owner}&d=buzz-world`,
+    `buzz://pr?id=${pullRequestId}&owner=${owner}&d=buzz-world`,
     `buzz://issue?id=${issueId}&owner=${owner}&d=buzz-world`,
   ].join(" ");
   const composerInput = page.getByTestId("message-input");
@@ -367,15 +369,17 @@ test("mixed Buzz permalinks render as chips in the composer", async ({
   }, links);
 
   const chips = composerInput.locator('[data-composer-buzz-link=""]');
-  await expect(chips).toHaveCount(4);
+  await expect(chips).toHaveCount(5);
   await expect(chips.nth(0)).toHaveText("general · mock-gen");
   await expect(chips.nth(1)).toHaveText("general");
   await expect(chips.nth(2)).toHaveText("buzz-world");
-  await expect(chips.nth(3)).toHaveText("buzz-world · bbbbbbbb");
+  await expect(chips.nth(3)).toHaveText("buzz-world · cccccccc");
+  await expect(chips.nth(4)).toHaveText("buzz-world · bbbbbbbb");
   await expect(chips.nth(1)).toHaveClass(/inline-chip-icon-channel/);
   await expect(chips.nth(2)).toHaveClass(/inline-chip-icon-repo/);
-  await expect(chips.nth(3)).toHaveClass(/inline-chip-icon-issue/);
-  for (const index of [0, 1, 2, 3]) {
+  await expect(chips.nth(3)).toHaveClass(/inline-chip-icon-pr/);
+  await expect(chips.nth(4)).toHaveClass(/inline-chip-icon-issue/);
+  for (const index of [0, 1, 2, 3, 4]) {
     const iconMask = await chips
       .nth(index)
       .evaluate((element) =>
