@@ -104,50 +104,13 @@ test("keeps successful sibling tags when another URL fails", async () => {
   assert.deepEqual(await preparation.promise, [firstTag]);
 });
 
-test("metadata readiness extends preparation to the bounded media deadline", async () => {
-  const pending = deferred();
-  const fallbackTag = ["link-preview", "snapshot", first.href, "metadata"];
-  seed(first, pending.promise, false, Date.now(), fallbackTag);
-
-  const preparation = prepareBackgroundLinkPreviews([first], 0, 1_000);
-  assert.ok(preparation);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  pending.resolve(firstTag);
-
-  assert.deepEqual(await preparation.promise, [firstTag]);
-});
-
-test("metadata deadline still settles when no fallback becomes available", async () => {
-  const pending = deferred();
-  seed(first, pending.promise);
-
-  const preparation = prepareBackgroundLinkPreviews([first], 0, 1_000);
-  assert.ok(preparation);
-  assert.deepEqual(await preparation.promise, []);
-
-  pending.resolve(firstTag);
-});
-
-test("metadata deadline preserves a completed sibling image", async () => {
-  const pending = deferred();
-  const fallbackTag = ["link-preview", "snapshot", second.href, "metadata"];
-  seed(first, Promise.resolve(firstTag), true, Date.now(), null, firstTag);
-  seed(second, pending.promise);
-
-  const preparation = prepareBackgroundLinkPreviews([first, second], 0, 1_000);
-  assert.ok(preparation);
-  assert.deepEqual(await preparation.promise, [firstTag]);
-
-  pending.resolve(fallbackTag);
-});
-
 test("total deadline keeps full and fallback sibling tags", async () => {
   const pending = deferred();
   const fallbackTag = ["link-preview", "snapshot", second.href, "metadata"];
   seed(first, Promise.resolve(firstTag), true, Date.now(), null, firstTag);
   seed(second, pending.promise, false, Date.now(), fallbackTag);
 
-  const preparation = prepareBackgroundLinkPreviews([first, second], 0, 0);
+  const preparation = prepareBackgroundLinkPreviews([first, second], 0);
   assert.ok(preparation);
   assert.deepEqual(await preparation.promise, [firstTag, fallbackTag]);
 
@@ -174,7 +137,7 @@ test("timeout keeps metadata-only fallback and ignores late upload completion", 
   ];
   seed(first, pending.promise, false, Date.now(), fallbackTag);
 
-  const preparation = prepareBackgroundLinkPreviews([first], 0, 0);
+  const preparation = prepareBackgroundLinkPreviews([first], 0);
   assert.ok(preparation);
   assert.deepEqual(await preparation.promise, [fallbackTag]);
 

@@ -255,6 +255,9 @@ test.beforeEach(async ({ page }, testInfo) => {
                         ) ||
                         testInfo.title.includes("Skip wins the upload race") ||
                         testInfo.title.includes(
+                          "async metadata beyond old cutoff",
+                        ) ||
+                        testInfo.title.includes(
                           "async upload beyond metadata budget",
                         ) ||
                         testInfo.title.includes(
@@ -269,7 +272,11 @@ test.beforeEach(async ({ page }, testInfo) => {
                               "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
                             imageDomain: "opengraph.githubassets.com",
                           },
-                          linkPreviewMetadataDelayMs: 300,
+                          linkPreviewMetadataDelayMs: testInfo.title.includes(
+                            "async metadata beyond old cutoff",
+                          )
+                            ? 4_000
+                            : 300,
                           linkPreviewUploadDelayMs: testInfo.title.includes(
                             "async upload beyond metadata budget",
                           )
@@ -984,6 +991,29 @@ test("Enter during an in-flight snapshot upload hands off and sends once", async
       ).length,
   );
   expect(sends).toBe(1);
+});
+
+test("async metadata beyond old cutoff still produces preview image", async ({
+  page,
+}) => {
+  const previewUrl = "https://github.com/block/buzz/pull/3246?slow=metadata";
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  const input = page.getByTestId("message-input");
+  await input.fill(previewUrl);
+  await input.press("Enter");
+
+  const progress = page.getByTestId("composer-upload-progress");
+  await expect(progress).toHaveAccessibleName("Preparing link preview");
+  await page.waitForTimeout(3_200);
+  await expect(progress).toBeVisible();
+
+  const row = page.getByTestId("message-row").last();
+  await expect(row).toContainText(previewUrl);
+  await expect(row.locator("[data-link-preview]")).toHaveAttribute(
+    "data-image-state",
+    "image",
+  );
 });
 
 test("async upload beyond metadata budget retains preview image", async ({

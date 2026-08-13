@@ -11,8 +11,7 @@ import {
   resolveLinkPreview,
 } from "@/shared/lib/useResolvedLinkPreviews";
 
-const POST_SUBMIT_METADATA_BUDGET_MS = 3_000;
-const POST_SUBMIT_TOTAL_PREVIEW_BUDGET_MS = 10_000;
+const POST_SUBMIT_PREVIEW_BUDGET_MS = 10_000;
 const SETTLED_PREVIEW_JOB_TTL_MS = 5 * 60_000;
 
 type PreviewJob = {
@@ -176,8 +175,7 @@ export function prepareLinkPreview(
  */
 export function prepareBackgroundLinkPreviews(
   candidates: readonly SupportedLinkPreview[],
-  metadataTimeoutMs = POST_SUBMIT_METADATA_BUDGET_MS,
-  totalTimeoutMs = POST_SUBMIT_TOTAL_PREVIEW_BUDGET_MS,
+  timeoutMs = POST_SUBMIT_PREVIEW_BUDGET_MS,
 ): PreparedBackgroundLinkPreviews | null {
   const external = candidates.filter(
     (candidate) =>
@@ -207,13 +205,11 @@ export function prepareBackgroundLinkPreviews(
   const taskId = nextTaskId++;
   let finish: ((tags: string[][]) => void) | null = null;
   let terminal = false;
-  let metadataTimer: ReturnType<typeof setTimeout> | null = null;
-  let totalTimer: ReturnType<typeof setTimeout> | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   const complete = (tags: string[][]) => {
     if (terminal) return;
     terminal = true;
-    if (metadataTimer !== null) clearTimeout(metadataTimer);
-    if (totalTimer !== null) clearTimeout(totalTimer);
+    if (timer !== null) clearTimeout(timer);
     tasks.delete(taskId);
     publishSnapshot();
     finish?.(tags);
@@ -225,17 +221,7 @@ export function prepareBackgroundLinkPreviews(
   tasks.set(taskId, { id: taskId, skip });
   publishSnapshot();
 
-  metadataTimer = setTimeout(() => {
-    const tags = availableTags();
-    const allMetadataSettled = external.every((candidate) => {
-      const job = jobs.get(candidate.href);
-      return (
-        job !== undefined && (job.fallbackTag !== null || job.settled === true)
-      );
-    });
-    if (!allMetadataSettled) complete(tags);
-  }, metadataTimeoutMs);
-  totalTimer = setTimeout(() => complete(availableTags()), totalTimeoutMs);
+  timer = setTimeout(() => complete(availableTags()), timeoutMs);
   void Promise.all(external.map(prepareLinkPreview)).then((tags) => {
     complete(tags.filter((tag): tag is string[] => tag !== null));
   });
