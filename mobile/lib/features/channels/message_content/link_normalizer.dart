@@ -7,6 +7,7 @@ final _bareLinkPattern = RegExp(
   r'(?:https?://|buzz://(?:message\?|join\?|channel/))[^\s)>\]]+',
 );
 final _trailingPunctuationPattern = RegExp(r'[.,!?:;]+$');
+final _trailingQuotePattern = RegExp(r'''['"]+$''');
 final _backtickRunPattern = RegExp(r'`+');
 
 /// Converts supported Buzz and HTTP(S) autolinks and bare links into Markdown
@@ -158,6 +159,11 @@ String _normalizeBareLink(String segment, Match match) {
     if (outsidePunctuation != null) {
       url = url.substring(0, outsidePunctuation.start);
       trailing = outsidePunctuation[0]!;
+    }
+    final outsideQuotes = _trailingQuotePattern.firstMatch(url);
+    if (outsideQuotes != null) {
+      url = url.substring(0, outsideQuotes.start);
+      trailing = '${outsideQuotes[0]}$trailing';
     }
   }
 
