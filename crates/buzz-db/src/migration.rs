@@ -625,7 +625,7 @@ mod tests {
         let mut migrations: Vec<_> = MIGRATOR.iter().collect();
         migrations.sort_by_key(|migration| migration.version);
 
-        assert_eq!(migrations.len(), 31);
+        assert_eq!(migrations.len(), 32);
         assert_eq!(migrations[0].version, 1);
         assert_eq!(&*migrations[0].description, "initial schema");
         assert!(migrations[0]
@@ -1038,8 +1038,8 @@ mod tests {
         assert!(deletion_recovery.contains("SET LOCAL lock_timeout = '5s'"));
 
         // Owner-scoped section workspaces are normalized and community-fenced.
-        assert_eq!(migrations[30].version, 31);
-        let section_workspaces = migrations[30].sql.as_str();
+        assert_eq!(migrations[31].version, 32);
+        let section_workspaces = migrations[31].sql.as_str();
         for table in [
             "section_workspaces",
             "section_grants",
@@ -1050,11 +1050,11 @@ mod tests {
         ] {
             assert!(
                 section_workspaces.contains(&format!("CREATE TABLE {table}")),
-                "migration 0031 must create {table}"
+                "migration 0032 must create {table}"
             );
             assert!(
                 section_workspaces.contains(&format!("attach_community_write_fence('{table}')")),
-                "migration 0031 must attach the community write fence to {table}"
+                "migration 0032 must attach the community write fence to {table}"
             );
             assert!(
                 desired_schema.contains(&format!("CREATE TABLE {table}")),
