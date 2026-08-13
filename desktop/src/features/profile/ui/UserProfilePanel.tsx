@@ -817,7 +817,8 @@ export function UserProfilePanel({
           isFollowing={isFollowing}
           isOwner={viewerIsOwner}
           isSelf={isSelf}
-          instances={personaInstances}
+          instances={personaInstances.live}
+          archivedInstances={personaInstances.archived}
           activityAgent={activityAgent}
           managedAgent={managedAgent}
           agentInfoFields={agentInfoFields}

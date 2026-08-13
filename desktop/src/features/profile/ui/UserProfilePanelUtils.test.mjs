@@ -257,7 +257,58 @@ test("resolveProfileManagedAgent_persona_fallback_shows_first_when_archive_state
   );
 });
 
-test("resolvePersonaInstances_filters_archived_siblings", () => {
+test("resolveProfileManagedAgent_persona_prefers_active_sibling_over_file_order", () => {
+  // Card face (pickProfileAgent) prefers an active sibling; panel resolution
+  // must land on the SAME instance even when the live active sibling is LATER
+  // in file order than a stopped one.
+  const stoppedFirst = agent({ pubkey: livePk, status: "stopped" });
+  const runningLater = agent({ pubkey: secondLivePk, status: "running" });
+  assert.equal(
+    resolveProfileManagedAgent(
+      [stoppedFirst, runningLater],
+      { persona: { id: "persona-1" } },
+      neverArchived,
+    ),
+    runningLater,
+  );
+});
+
+test("resolveProfileManagedAgent_persona_prefers_name_over_file_order_at_equal_status", () => {
+  // Same status: card sorts by name, so the panel must too — not file order.
+  const zed = agent({ pubkey: livePk, name: "Zed", status: "stopped" });
+  const abe = agent({ pubkey: secondLivePk, name: "Abe", status: "stopped" });
+  assert.equal(
+    resolveProfileManagedAgent(
+      [zed, abe],
+      { persona: { id: "persona-1" } },
+      neverArchived,
+    ),
+    abe,
+  );
+});
+
+test("resolveProfileManagedAgent_persona_errored_card_pick_matches_panel_when_last_in_file_order", () => {
+  // A stopped-errored sibling the card would pick (its only live one) sits LAST
+  // in file order behind an archived record; the panel must open that same
+  // instance, not the archived-first record and not undefined.
+  const archived = agent({ pubkey: archivedPk, status: "stopped" });
+  const erroredLive = agent({
+    pubkey: livePk,
+    name: "Errored",
+    status: "stopped",
+    lastError: "boom",
+  });
+  assert.equal(
+    resolveProfileManagedAgent(
+      [archived, erroredLive],
+      { persona: { id: "persona-1" } },
+      isArchivedIn(archivedPk),
+    ),
+    erroredLive,
+  );
+});
+
+test("resolvePersonaInstances_splits_live_and_archived_siblings", () => {
   const archived = agent({ pubkey: archivedPk });
   const live = agent({ pubkey: livePk });
   const anotherLive = agent({ pubkey: secondLivePk });
@@ -267,22 +318,22 @@ test("resolvePersonaInstances_filters_archived_siblings", () => {
       [archived, live, anotherLive],
       isArchivedIn(archivedPk),
     ),
-    [live, anotherLive],
+    { live: [live, anotherLive], archived: [archived] },
   );
 });
 
-test("resolvePersonaInstances_all_archived_returns_empty_list", () => {
+test("resolvePersonaInstances_all_archived_surfaces_archived_bucket_only", () => {
   const first = agent({ pubkey: archivedPk });
   const second = agent({ pubkey: livePk });
-  // Every sibling archived: the Instances section self-omits on an empty array,
-  // so archived identities never surface here.
+  // Every sibling archived: the live list is empty and the Archived subsection
+  // carries every row so unarchive stays UI-reachable.
   assert.deepEqual(
     resolvePersonaInstances(
       first,
       [first, second],
       isArchivedIn(archivedPk, livePk),
     ),
-    [],
+    { live: [], archived: [first, second] },
   );
 });
 
@@ -291,15 +342,16 @@ test("resolvePersonaInstances_unknown_archive_state_shows_all_rows", () => {
   const second = agent({ pubkey: livePk });
   assert.deepEqual(
     resolvePersonaInstances(first, [first, second], neverArchived),
-    [first, second],
+    { live: [first, second], archived: [] },
   );
 });
 
 test("resolvePersonaInstances_agent_without_persona_returns_only_itself", () => {
   const solo = agent({ pubkey: livePk, personaId: null });
-  assert.deepEqual(resolvePersonaInstances(solo, [solo], neverArchived), [
-    solo,
-  ]);
+  assert.deepEqual(resolvePersonaInstances(solo, [solo], neverArchived), {
+    live: [solo],
+    archived: [],
+  });
 });
 
 // ── Finding 4: loading→hydrated seam ────────────────────────────────────────

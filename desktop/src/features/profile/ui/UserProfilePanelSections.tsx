@@ -95,6 +95,7 @@ export type ProfileSummaryViewProps = {
   isOwner: boolean | undefined;
   isSelf: boolean;
   instances: ManagedAgent[];
+  archivedInstances: ManagedAgent[];
   managedAgent: ManagedAgent | undefined;
   agentInfoFields: ProfileField[];
   archiveActions: IdentityArchiveActions;
@@ -170,6 +171,7 @@ export function ProfileSummaryView({
   isOwner,
   isSelf,
   instances,
+  archivedInstances,
   managedAgent,
   agentInfoFields,
   archiveActions,
@@ -240,6 +242,7 @@ export function ProfileSummaryView({
       runtimeConfigurationFields.length > 0 ||
       runtimeSettingsFields.length > 0 ||
       instances.length > 0 ||
+      archivedInstances.length > 0 ||
       diagnosticsFields.length > 0 ||
       canOpenAgentLogs ||
       showRuntimePreview);
@@ -556,6 +559,7 @@ export function ProfileSummaryView({
                   diagnosticsSummary={diagnosticsTrailing}
                   configurationFields={displayedRuntimeFields}
                   instances={instances}
+                  archivedInstances={archivedInstances}
                   modelSettings={
                     isOwner === true && managedAgent !== undefined ? (
                       <AgentConfigPanel
