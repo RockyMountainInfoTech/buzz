@@ -1036,6 +1036,33 @@ mod tests {
         assert_eq!(migrations[29].version, 30);
         let deletion_recovery = migrations[29].sql.as_str();
         assert!(deletion_recovery.contains("SET LOCAL lock_timeout = '5s'"));
+
+        // Owner-scoped section workspaces are normalized and community-fenced.
+        assert_eq!(migrations[30].version, 31);
+        let section_workspaces = migrations[30].sql.as_str();
+        for table in [
+            "section_workspaces",
+            "section_grants",
+            "section_key_envelopes",
+            "sections",
+            "section_assignments",
+            "section_actions",
+        ] {
+            assert!(
+                section_workspaces.contains(&format!("CREATE TABLE {table}")),
+                "migration 0031 must create {table}"
+            );
+            assert!(
+                section_workspaces.contains(&format!("attach_community_write_fence('{table}')")),
+                "migration 0031 must attach the community write fence to {table}"
+            );
+            assert!(
+                desired_schema.contains(&format!("CREATE TABLE {table}")),
+                "desired-state schema must create {table}"
+            );
+        }
+        assert!(section_workspaces.contains("CREATE UNIQUE INDEX sections_active_rank"));
+        assert!(desired_schema.contains("CREATE UNIQUE INDEX sections_active_rank"));
     }
 
     #[test]
@@ -1485,6 +1512,18 @@ mod tests {
         let mut expected_fences = migration.fence_attachments.clone();
         expected_fences.remove("product_feedback");
         expected_fences.remove("rate_limit_violations");
+        expected_fences.extend(
+            [
+                "section_actions",
+                "section_assignments",
+                "section_grants",
+                "section_key_envelopes",
+                "section_workspaces",
+                "sections",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        );
         assert_eq!(
             expected_fences, schema.fence_attachments,
             "write-fence attachment targets differ after recovery policy"

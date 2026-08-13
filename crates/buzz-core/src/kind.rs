@@ -369,6 +369,20 @@ pub const KIND_MODERATION_UNTIMEOUT: u32 = 9043;
 /// `handlers/moderation_commands.rs` for the pinned vocabulary).
 pub const KIND_MODERATION_RESOLVE_REPORT: u32 = 9044;
 
+// Owner-scoped channel-section workspace commands. These user-signed commands
+// are consumed transactionally by the relay and are never stored as ordinary
+// events. Separate kinds make the authorized mutation scope unambiguous.
+/// Section workspace: revision-zero import of a legacy kind-30078 store.
+pub const KIND_SECTION_WORKSPACE_IMPORT: u32 = 9050;
+/// Section workspace: owner-only grant or role update.
+pub const KIND_SECTION_WORKSPACE_GRANT: u32 = 9051;
+/// Section workspace: owner-only revoke with content-key epoch rotation.
+pub const KIND_SECTION_WORKSPACE_REVOKE: u32 = 9052;
+/// Section workspace: assign or unassign one channel (stage 2).
+pub const KIND_SECTION_WORKSPACE_MOVE: u32 = 9053;
+/// Section workspace: create, rename, delete, or reorder sections (stage 3).
+pub const KIND_SECTION_WORKSPACE_MANAGE: u32 = 9054;
+
 /// Returns `true` for community moderation command kinds (9040–9044).
 ///
 /// The canonical route check — use this instead of scattering
@@ -447,6 +461,8 @@ pub const KIND_WORKFLOW_DEF: u32 = 30620;
 /// the latest event is always the authoritative hidden set. The relay knows
 /// `hidden_at` per viewer; this is the only Nostr-visible projection of it.
 pub const KIND_DM_VISIBILITY: u32 = 30622;
+/// Relay-signed current projection of an owner-scoped section workspace.
+pub const KIND_SECTION_WORKSPACE_PROJECTION: u32 = 30623;
 
 /// Lower bound of the NIP-33 parameterized replaceable range (30000–39999).
 pub const PARAM_REPLACEABLE_KIND_MIN: u32 = 30000;
@@ -673,6 +689,11 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_MODERATION_TIMEOUT,
     KIND_MODERATION_UNTIMEOUT,
     KIND_MODERATION_RESOLVE_REPORT,
+    KIND_SECTION_WORKSPACE_IMPORT,
+    KIND_SECTION_WORKSPACE_GRANT,
+    KIND_SECTION_WORKSPACE_REVOKE,
+    KIND_SECTION_WORKSPACE_MOVE,
+    KIND_SECTION_WORKSPACE_MANAGE,
     RELAY_ADMIN_ADD_MEMBER,
     RELAY_ADMIN_REMOVE_MEMBER,
     RELAY_ADMIN_CHANGE_ROLE,
@@ -712,6 +733,7 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_CHANNEL_SUMMARY,
     KIND_PRESENCE_SNAPSHOT,
     KIND_DM_VISIBILITY,
+    KIND_SECTION_WORKSPACE_PROJECTION,
     KIND_DM_OPEN,
     KIND_DM_ADD_MEMBER,
     KIND_DM_HIDE,

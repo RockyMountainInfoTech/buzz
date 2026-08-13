@@ -47,6 +47,8 @@ pub mod relay_invite;
 pub mod relay_members;
 /// Replica freshness fence for keyset-cursor read routing.
 pub mod replica_fence;
+/// Owner-scoped channel-section workspace persistence.
+pub mod section_workspace;
 /// Thread metadata persistence.
 pub mod thread;
 /// Per-community usage rollup queries for Prometheus gauges.
@@ -1222,6 +1224,11 @@ impl Db {
     /// Return the shared durable whole-community deletion adapter.
     pub fn deletion_store(&self) -> deletion::DeletionStore {
         deletion::DeletionStore::new(self.pool.clone())
+    }
+
+    /// Owner-scoped channel-section workspace persistence.
+    pub fn section_workspace_store(&self) -> section_workspace::SectionWorkspaceStore {
+        section_workspace::SectionWorkspaceStore::new(self.pool.clone())
     }
 
     /// Begin a database transaction for atomic multi-statement operations.

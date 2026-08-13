@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "kinds": {
+    "import_v1": 9050,
+    "grant": 9051,
+    "revoke": 9052,
+    "move": 9053,
+    "manage": 9054,
+    "projection": 30623
+  },
+  "roles": [
+    "viewer",
+    "mover",
+    "manager"
+  ],
+  "limits": {
+    "sections": 100,
+    "assignments": 1000,
+    "grants": 256,
+    "encrypted_metadata_bytes": 65535,
+    "key_envelope_bytes": 4096
+  },
+  "projection_cases": [
+    {
+      "name": "migrated-owner-and-viewer",
+      "projection": {
+        "version": 1,
+        "owner_pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "revision": 4,
+        "layout_revision": 1,
+        "key_epoch": 2,
+        "migration": {
+          "source_event_id": "2222222222222222222222222222222222222222222222222222222222222222",
+          "source_hash": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        "reader_key_envelope": "nip44-envelope-reader-epoch-2",
+        "sections": [
+          {
+            "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "rank": 0,
+            "encrypted_label": "ciphertext-alpha",
+            "encrypted_icon": null
+          },
+          {
+            "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "rank": 1,
+            "encrypted_label": "ciphertext-beta",
+            "encrypted_icon": "ciphertext-icon"
+          }
+        ],
+        "assignments": [
+          {
+            "channel_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            "section_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "revision": 1
+          }
+        ]
+      },
+      "expect": "accept"
+    },
+    {
+      "name": "revision-gap",
+      "previous_revision": 4,
+      "projection": {
+        "version": 1,
+        "revision": 6
+      },
+      "expect": "refetch"
+    },
+    {
+      "name": "stale-projection",
+      "previous_revision": 4,
+      "projection": {
+        "version": 1,
+        "revision": 3
+      },
+      "expect": "ignore"
+    }
+  ],
+  "role_matrix": {
+    "owner": [
+      "read",
+      "grant",
+      "revoke",
+      "move",
+      "manage",
+      "import_v1"
+    ],
+    "viewer": [
+      "read"
+    ],
+    "mover": [
+      "read",
+      "move"
+    ],
+    "manager": [
+      "read",
+      "move",
+      "manage"
+    ]
+  },
+  "canonicalization": {
+    "profile": "nip-sw-canonical-json-v1",
+    "legacy_plaintext": {
+      "input": {
+        "version": 1,
+        "sections": [
+          {
+            "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "name": "Alpha",
+            "icon": "folder",
+            "order": 0
+          }
+        ],
+        "assignments": {
+          "cccccccc-cccc-4ccc-8ccc-cccccccccccc": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      },
+      "canonical": "{\"assignments\":{\"cccccccc-cccc-4ccc-8ccc-cccccccccccc\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\"},\"sections\":[{\"icon\":\"folder\",\"id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"name\":\"Alpha\",\"order\":0}],\"version\":1}",
+      "sha256": "336ba846d8a2aef9ca7de80e494201e503b64fa364ec1a629873f3fa83232d5d"
+    },
+    "import_command": {
+      "canonical": "{\"action_id\":\"dddddddd-dddd-4ddd-8ddd-dddddddddddd\",\"assignments\":[{\"channel_id\":\"cccccccc-cccc-4ccc-8ccc-cccccccccccc\",\"section_id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\"}],\"key_epoch\":1,\"owner_key_envelope\":\"nip44-owner-envelope\",\"sections\":[{\"encrypted_icon\":null,\"encrypted_label\":\"ciphertext-label\",\"id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"rank\":0}],\"source_event_id\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"source_hash\":\"336ba846d8a2aef9ca7de80e494201e503b64fa364ec1a629873f3fa83232d5d\",\"version\":1}",
+      "sha256": "c2801715fbdcd339b0ccf49a22c1efb111294e6af72cd0604a782ce692977099"
+    }
+  },
+  "metadata_crypto": {
+    "algorithm": "AES-256-GCM",
+    "encoding": "aes256gcm:<base64url-no-pad-12-byte-nonce>:<base64url-no-pad-ciphertext-and-16-byte-tag>",
+    "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "nonce_base64url": "AAECAwQFBgcICQoL",
+    "plaintext_utf8": "Alpha",
+    "aad_canonical": "{\"community\":\"relay.example\",\"key_epoch\":1,\"owner_pubkey\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"purpose\":\"label\",\"section_id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"version\":1}",
+    "envelope": "aes256gcm:AAECAwQFBgcICQoL:Bm6mc6SHvhxcEB6Q1Lc56VuJZjD7",
+    "reject_if_aad_changes": [
+      "community",
+      "owner_pubkey",
+      "section_id",
+      "key_epoch",
+      "purpose"
+    ]
+  },
+  "command_cases": [
+    {
+      "name": "grant-accept",
+      "command": {
+        "version": 1,
+        "action_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        "actor_pubkey": "4444444444444444444444444444444444444444444444444444444444444444",
+        "role": "viewer",
+        "key_epoch": 1,
+        "key_envelope": "nip44-viewer-envelope"
+      },
+      "expect": "accept"
+    },
+    {
+      "name": "grant-unknown-field",
+      "command": {
+        "version": 1,
+        "action_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        "actor_pubkey": "4444444444444444444444444444444444444444444444444444444444444444",
+        "role": "viewer",
+        "key_epoch": 1,
+        "key_envelope": "nip44-viewer-envelope",
+        "extra": true
+      },
+      "expect": "reject"
+    },
+    {
+      "name": "revoke-accept",
+      "command": {
+        "version": 1,
+        "action_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        "actor_pubkey": "4444444444444444444444444444444444444444444444444444444444444444",
+        "new_key_epoch": 2,
+        "sections": [
+          {
+            "section_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "encrypted_label": "ciphertext-label-epoch-2",
+            "encrypted_icon": null
+          }
+        ],
+        "envelopes": [
+          {
+            "reader_pubkey": "1111111111111111111111111111111111111111111111111111111111111111",
+            "key_envelope": "nip44-owner-epoch-2"
+          }
+        ]
+      },
+      "expect": "accept"
+    },
+    {
+      "name": "action-id-different-hash",
+      "same_action_id": true,
+      "first_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "retry_hash": "0101010101010101010101010101010101010101010101010101010101010101",
+      "expect": "reject"
+    }
+  ]
+}
