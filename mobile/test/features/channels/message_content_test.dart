@@ -677,6 +677,41 @@ void main() {
         );
       });
 
+      testWidgets('routes angle-bracket Buzz Markdown destinations', (
+        tester,
+      ) async {
+        const messageUrl = 'buzz://message?channel=channel-1&id=message-1';
+        const channelId = '580ca78b-9dae-46f3-8854-bd671853ba32';
+        const channelUrl = 'buzz://channel/$channelId';
+        String? tappedChannelId;
+
+        await tester.pumpWidget(
+          _testable(
+            MessageContent(
+              content:
+                  '[Open message](<$messageUrl>) [Open channel](<$channelUrl>)',
+              onChannelTap: (id) => tappedChannelId = id,
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Open message'));
+        await tester.pump();
+        final container = ProviderScope.containerOf(
+          tester.element(find.byType(MessageContent)),
+        );
+        expect(
+          container.read(pendingDeepLinkProvider),
+          const MessageDeepLink(channelId: 'channel-1', messageId: 'message-1'),
+        );
+
+        container.read(pendingDeepLinkProvider.notifier).state = null;
+        await tester.tap(find.text('Open channel'));
+        await tester.pump();
+        expect(tappedChannelId, channelId);
+        expect(container.read(pendingDeepLinkProvider), isNull);
+      });
+
       testWidgets('routes rendered Buzz channel links through callback', (
         tester,
       ) async {

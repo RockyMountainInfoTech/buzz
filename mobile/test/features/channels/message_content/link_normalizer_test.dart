@@ -11,6 +11,19 @@ void main() {
     );
   });
 
+  test('preserves angle-bracket Buzz Markdown destinations', () {
+    const channelUrl = 'buzz://channel/550e8400-e29b-41d4-a716-446655440000';
+    const messageUrl = 'buzz://message?channel=channel-1&id=message-1';
+    expect(
+      normalizeBareLinks(
+        '[channel](<$channelUrl>) [message](<$messageUrl>) '
+        '<$channelUrl> <$messageUrl>',
+      ),
+      '[channel]($channelUrl) [message]($messageUrl) '
+      '[$channelUrl]($channelUrl) [$messageUrl]($messageUrl)',
+    );
+  });
+
   test('keeps punctuation and open Markdown delimiters outside links', () {
     expect(
       normalizeBareLinks('**open $url**. and **_${url}_**!'),

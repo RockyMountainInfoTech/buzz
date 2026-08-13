@@ -167,23 +167,34 @@ fn queue_community_deep_link(
         });
 }
 
+fn enqueue_navigation_for_current_workspace(
+    transition: &crate::commands::WorkspaceTransitionState,
+    queue: &PendingNavigationDeepLinks,
+    pending: PendingNavigationDeepLink,
+) {
+    transition.with_current_generation(|workspace_generation| {
+        queue.enqueue(PendingNavigationDeepLink {
+            workspace_generation,
+            ..pending
+        });
+    });
+}
+
 fn queue_navigation_deep_link(app: &tauri::AppHandle, kind: &str, payload: &serde_json::Value) {
     let Some(channel_id) = payload["channelId"].as_str() else {
         return;
     };
-    let workspace_generation = app
-        .state::<crate::app_state::AppState>()
-        .workspace_transition
-        .current_generation();
-    app.state::<PendingNavigationDeepLinks>()
-        .enqueue(PendingNavigationDeepLink {
-            id: uuid::Uuid::new_v4().to_string(),
-            kind: kind.to_owned(),
-            channel_id: channel_id.to_owned(),
-            message_id: payload["messageId"].as_str().map(str::to_owned),
-            thread_root_id: payload["threadRootId"].as_str().map(str::to_owned),
-            workspace_generation,
-        });
+    let pending = PendingNavigationDeepLink {
+        id: uuid::Uuid::new_v4().to_string(),
+        kind: kind.to_owned(),
+        channel_id: channel_id.to_owned(),
+        message_id: payload["messageId"].as_str().map(str::to_owned),
+        thread_root_id: payload["threadRootId"].as_str().map(str::to_owned),
+        workspace_generation: 0,
+    };
+    let state = app.state::<crate::app_state::AppState>();
+    let queue = app.state::<PendingNavigationDeepLinks>();
+    enqueue_navigation_for_current_workspace(&state.workspace_transition, &queue, pending);
 }
 
 fn activate_main_window(app: &tauri::AppHandle) {
@@ -610,6 +621,41 @@ mod tests {
         queue.clear_before(2);
         assert_eq!(queue.first().unwrap().id, "fresh");
         assert!(queue.acknowledge("fresh"));
+        assert!(queue.first().is_none());
+    }
+
+    #[test]
+    fn navigation_enqueue_holds_transition_ownership_through_queue_insertion() {
+        let transition = std::sync::Arc::new(crate::commands::WorkspaceTransitionState::default());
+        let queue = PendingNavigationDeepLinks::default();
+        assert_eq!(transition.claim_next(), 1);
+
+        let transition_for_claim = std::sync::Arc::clone(&transition);
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (claimed_tx, claimed_rx) = std::sync::mpsc::channel();
+        transition
+            .with_current_generation(|workspace_generation| {
+                let claim = std::thread::spawn(move || {
+                    started_tx.send(()).unwrap();
+                    claimed_tx.send(transition_for_claim.claim_next()).unwrap();
+                });
+                started_rx.recv().unwrap();
+                assert!(claimed_rx.try_recv().is_err());
+                queue.enqueue(pending_navigation_at(
+                    "queued",
+                    "channel",
+                    "channel-1",
+                    None,
+                    None,
+                    workspace_generation,
+                ));
+                claim
+            })
+            .join()
+            .unwrap();
+
+        assert_eq!(claimed_rx.recv().unwrap(), 2);
+        queue.clear_before(2);
         assert!(queue.first().is_none());
     }
 

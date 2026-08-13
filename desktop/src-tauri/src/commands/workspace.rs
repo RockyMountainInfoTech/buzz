@@ -168,7 +168,7 @@ impl<'a> WorkspaceTransitionOwner<'a> {
 }
 
 impl WorkspaceTransitionState {
-    fn claim_next(&self) -> u64 {
+    pub(crate) fn claim_next(&self) -> u64 {
         let _commit_guard = self.commit.lock().unwrap_or_else(|e| e.into_inner());
         self.generation.fetch_add(1, Ordering::AcqRel) + 1
     }
@@ -183,6 +183,14 @@ impl WorkspaceTransitionState {
 
     pub(crate) fn current_generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
+    }
+
+    /// Run an action against the current generation while excluding a
+    /// concurrent transition claim. This makes generation capture and any
+    /// state publication performed by `action` one atomic transition step.
+    pub(crate) fn with_current_generation<T>(&self, action: impl FnOnce(u64) -> T) -> T {
+        let _commit_guard = self.commit.lock().unwrap_or_else(|e| e.into_inner());
+        action(self.current_generation())
     }
 
     fn owner(&self, generation: u64) -> WorkspaceTransitionOwner<'_> {

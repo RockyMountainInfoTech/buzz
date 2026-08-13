@@ -111,10 +111,18 @@ bool _hasInlineCloser(String content, int start, int delimiterLength) {
 }
 
 String _normalizeLinkSegment(String segment) {
-  var normalized = segment.replaceAllMapped(
-    _autolinkPattern,
-    (match) => '[${match[1]}](${match[1]})',
-  );
+  var normalized = segment.replaceAllMapped(_autolinkPattern, (match) {
+    final url = match[1]!;
+    // An angle-bracket URL immediately after a Markdown label is that link's
+    // destination, not an autolink. Buzz schemes entered this pass in this
+    // feature; leave existing HTTP(S) behavior unchanged.
+    if (url.startsWith('buzz://') &&
+        match.start >= 2 &&
+        segment.substring(match.start - 2, match.start) == '](') {
+      return url;
+    }
+    return '[$url]($url)';
+  });
   normalized = normalized.replaceAllMapped(
     _bareLinkPattern,
     (match) => _normalizeBareLink(normalized, match),
@@ -137,7 +145,10 @@ String _normalizeBareLink(String segment, Match match) {
     if (previous == '(' ||
         previous == '\\' ||
         previous == ']' ||
-        previous == '=') {
+        previous == '=' ||
+        (previous == '<' &&
+            start >= 3 &&
+            segment.substring(start - 3, start) == '](<')) {
       return matched;
     }
   }
