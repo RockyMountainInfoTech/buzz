@@ -464,16 +464,18 @@ Future<DateTime?> _showNativeDateTimePicker(
     );
   }
 
+  final lastDate = now.add(const Duration(days: 365));
+  final androidInitial = safeInitial.isAfter(lastDate) ? lastDate : safeInitial;
   final date = await showDatePicker(
     context: context,
-    initialDate: safeInitial,
+    initialDate: androidInitial,
     firstDate: now,
-    lastDate: now.add(const Duration(days: 365)),
+    lastDate: lastDate,
   );
   if (date == null || !context.mounted) return null;
   final time = await showTimePicker(
     context: context,
-    initialTime: TimeOfDay.fromDateTime(safeInitial),
+    initialTime: TimeOfDay.fromDateTime(androidInitial),
   );
   if (time == null) return null;
   final selected = DateTime(

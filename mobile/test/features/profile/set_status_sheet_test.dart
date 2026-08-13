@@ -120,6 +120,47 @@ void main() {
     );
   });
 
+  testWidgets('clamps an existing custom date to the Android picker range', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final expiresAt = DateTime.now().add(const Duration(days: 730));
+    await tester.pumpWidget(
+      WidgetHelpers.testable(
+        overrides: [
+          customEmojiListProvider.overrideWithValue(const []),
+          userStatusProvider.overrideWith(() => _RecordingUserStatusNotifier()),
+        ],
+        child: Builder(
+          builder: (context) => FilledButton(
+            onPressed: () => showSetStatusSheet(
+              context,
+              currentStatus: UserStatus(
+                text: 'Sabbatical',
+                emoji: '\u{1F3DD}\u{FE0F}',
+                updatedAt: 1,
+                expiresAt: expiresAt.millisecondsSinceEpoch ~/ 1000,
+              ),
+            ),
+            child: const Text('Open status editor'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Open status editor'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Until'));
+    await tester.pumpAndSettle();
+
+    final picker = tester.widget<DatePickerDialog>(
+      find.byType(DatePickerDialog),
+    );
+    expect(picker.initialDate, picker.lastDate);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('custom duration reveals the native until picker', (
     tester,
   ) async {
