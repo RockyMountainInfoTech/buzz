@@ -61,6 +61,30 @@ test("hasVideoAttachment detects markdown and imeta videos", () => {
   assert.equal(hasVideoAttachment(message({ body: "plain text" })), false);
 });
 
+test("hasVideoAttachment uses the Markdown renderer's video classification", () => {
+  assert.equal(
+    hasVideoAttachment(
+      message({ body: "![Demo](https://cdn.example.com/cut.mp4)" }),
+    ),
+    true,
+  );
+  assert.equal(
+    hasVideoAttachment(
+      message({ body: "![Poster](https://cdn.example.com/cut.jpg)" }),
+    ),
+    false,
+  );
+  assert.equal(
+    hasVideoAttachment(
+      message({
+        body: "![Demo](https://relay/media/cut.mp4)",
+        tags: [["imeta", "url https://relay/media/cut.mp4", "m image/png"]],
+      }),
+    ),
+    false,
+  );
+});
+
 test("buildVideoReviewCommentsByRootId includes nested descendants", () => {
   const video = message({
     id: "video",

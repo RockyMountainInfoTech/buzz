@@ -1,6 +1,8 @@
 import type { TimelineMessage } from "@/features/messages/types";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { ChannelType } from "@/shared/api/types";
+import { isVideoMedia } from "@/shared/ui/markdown/mediaEntry";
+import { parseImetaTags } from "@/shared/ui/markdown/parseImeta";
 import type { VideoReviewContext } from "@/shared/ui/VideoPlayer";
 
 type SendVideoReviewComment = (
@@ -17,18 +19,25 @@ type ToggleMessageReaction = (
   remove: boolean,
 ) => Promise<void>;
 
+const MARKDOWN_IMAGE_RE =
+  /!\[(?:\\.|[^\]\\])*\]\(\s*(?:<([^>\r\n]+)>|([^\s)]+))[^\r\n)]*\)/g;
+
 export function hasVideoAttachment(
   message: Pick<TimelineMessage, "body" | "tags">,
 ): boolean {
-  if (message.body.includes("![video](")) return true;
+  const imetaByUrl = parseImetaTags(message.tags ?? []);
+  if (
+    [...imetaByUrl.values()].some((entry) => isVideoMedia(entry.url, entry.m))
+  ) {
+    return true;
+  }
 
-  return (
-    message.tags?.some(
-      (tag) =>
-        tag[0] === "imeta" &&
-        tag.some((part) => part.toLowerCase().startsWith("m video/")),
-    ) ?? false
-  );
+  for (const match of message.body.matchAll(MARKDOWN_IMAGE_RE)) {
+    const src = match[1] ?? match[2];
+    if (src && isVideoMedia(src, imetaByUrl.get(src)?.m)) return true;
+  }
+
+  return false;
 }
 
 export function buildVideoReviewCommentsByRootId(

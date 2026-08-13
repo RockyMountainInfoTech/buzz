@@ -1128,6 +1128,48 @@ test("Inbox preserves bracketed timestamps without video evidence", async ({
   ).toHaveCount(0);
 });
 
+test("Inbox recognizes extension-based video ancestors with custom alt text", async ({
+  page,
+}) => {
+  await installVideoReviewHarness(page);
+
+  await page.goto("/");
+  await page.getByTestId("channel-general").click();
+  await expect(page.getByTestId("chat-title")).toHaveText("general");
+  await waitForMockLiveSubscription(page, "general");
+
+  const root = (await emitMockMessage(
+    page,
+    "general",
+    "Can you review this cut?",
+  )) as { id: string };
+  const video = (await emitMockMessage(
+    page,
+    "general",
+    `![Launch demo](${VIDEO_URL})`,
+    { parentEventId: root.id },
+  )) as MockFeedMessage;
+  const comment = (await emitMockMessage(
+    page,
+    "general",
+    "[00:01] Tighten this transition.",
+    { parentEventId: video.id },
+  )) as MockFeedMessage;
+  await pushMockFeedItems(page, [video, comment]);
+
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  const inboxRow = page.getByTestId(`home-inbox-item-${comment.id}`);
+  await expect(
+    inboxRow.getByTestId("video-review-comment-timecode"),
+  ).toBeVisible();
+  await inboxRow.click();
+  await page
+    .getByTestId("home-inbox-detail")
+    .getByRole("button", { name: "Jump to 00:01" })
+    .click();
+  await expect(page.getByTestId("video-review-dialog")).toBeVisible();
+});
+
 test("message timecodes deterministically open the first attached video", async ({
   page,
 }) => {
