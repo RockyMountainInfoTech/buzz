@@ -24,9 +24,10 @@ export function VideoReviewCommentMarkdown({
   ...markdownProps
 }: VideoReviewCommentMarkdownProps) {
   const openVideoReviewAt = useOpenVideoReviewAt();
-  const reviewTimecode = videoReviewCommentRootId
-    ? parseVideoReviewTimecode(content)
-    : null;
+  const reviewTimecode = React.useMemo(
+    () => (videoReviewCommentRootId ? parseVideoReviewTimecode(content) : null),
+    [content, videoReviewCommentRootId],
+  );
   const handleTimecodeClick = React.useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.stopPropagation();
@@ -36,6 +37,24 @@ export function VideoReviewCommentMarkdown({
     },
     [openVideoReviewAt, reviewTimecode, videoReviewCommentRootId],
   );
+  const leadingInlineContent = React.useMemo(() => {
+    if (!reviewTimecode) return undefined;
+
+    const timecode =
+      interactive && openVideoReviewAt ? (
+        <VideoReviewTimecodeButton
+          surface="message"
+          timecode={reviewTimecode.timecode}
+          onClick={handleTimecodeClick}
+        />
+      ) : (
+        <VideoReviewTimecodeChip
+          surface="message"
+          timecode={reviewTimecode.timecode}
+        />
+      );
+    return <>{timecode} </>;
+  }, [handleTimecodeClick, interactive, openVideoReviewAt, reviewTimecode]);
 
   if (!reviewTimecode) {
     return (
@@ -47,26 +66,12 @@ export function VideoReviewCommentMarkdown({
     );
   }
 
-  const timecode =
-    interactive && openVideoReviewAt ? (
-      <VideoReviewTimecodeButton
-        surface="message"
-        timecode={reviewTimecode.timecode}
-        onClick={handleTimecodeClick}
-      />
-    ) : (
-      <VideoReviewTimecodeChip
-        surface="message"
-        timecode={reviewTimecode.timecode}
-      />
-    );
-
   return (
     <Markdown
       {...markdownProps}
       content={reviewTimecode.text || "\u200B"}
       interactive={interactive}
-      leadingInlineContent={<>{timecode} </>}
+      leadingInlineContent={leadingInlineContent}
     />
   );
 }
