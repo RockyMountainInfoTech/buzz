@@ -9,9 +9,10 @@
  * Mounts the shipping ProfileInstancesSection (which owns the Instances
  * section) rather than a reimplementation, and drives the real expand toggle.
  * The final test calls the shared resolveManagedProfileState composition — the
- * exact function UserProfilePanel uses — so an all-archived persona is proven
- * to reach the Archived subsection through the one production seam, not a
- * test-local copy of the persona-ID fallback.
+ * exact function UserProfilePanel uses — and feeds its output into the section,
+ * proving the composition buckets correctly and the section renders the
+ * Archived subsection. It does NOT exercise the panel's own prop wiring between
+ * the two; profilePanelBridgeContract.test.mjs guards that thin bridge.
  */
 
 import assert from "node:assert/strict";
@@ -153,11 +154,13 @@ test("test_archived_row_click_opens_that_explicit_pubkey", () => {
   assert.deepEqual(opened, [ARCHIVED_PK]);
 });
 
-test("test_all_archived_persona_reaches_archived_subsection_through_production_seam", () => {
+test("test_all_archived_persona_composition_feeds_archived_subsection", () => {
   // Call the SAME composition the panel calls (resolveManagedProfileState),
-  // not a test-local copy of its persona-ID fallback. An all-archived persona's
-  // primary managedAgent resolves undefined, yet the persona ID still keys the
-  // instances buckets.
+  // not a test-local copy of its persona-ID fallback, and feed its output into
+  // the section. An all-archived persona's primary managedAgent resolves
+  // undefined, yet the persona ID still keys the instances buckets. This does
+  // not assert the panel's own prop wiring — profilePanelBridgeContract covers
+  // that.
   const first = agent({ pubkey: ARCHIVED_PK, name: "Archived one" });
   const second = agent({ pubkey: LIVE_PK, name: "Archived two" });
   const agents = [first, second];
