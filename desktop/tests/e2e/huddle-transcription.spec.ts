@@ -1160,7 +1160,7 @@ test("keeps a starting huddle in the drawer after its companion closes", async (
   ).toBeVisible();
 });
 
-test("starts unmuted with Push to Talk while preserving manual microphone control", async ({
+test("starts muted with Push to Talk while preserving manual microphone control", async ({
   page,
 }) => {
   await installFakeHuddleMicrophone(page);
@@ -1172,17 +1172,35 @@ test("starts unmuted with Push to Talk while preserving manual microphone contro
   await page.getByTestId("channel-alice-tyler").click();
   await page.getByTestId("channel-start-huddle-trigger").click();
 
+  // Push to Talk huddles start muted (matching the Rust
+  // manual_mic_unmuted default) so nothing is hot until the user opts in.
   const muteButton = page.getByRole("button", { name: "Mute microphone" });
+  const unmuteButton = page.getByRole("button", {
+    name: "Unmute microphone",
+  });
+  await expect(unmuteButton).toBeVisible();
+  await expect(unmuteButton).toHaveClass(/bg-destructive\/15/);
+  await expect(unmuteButton).toHaveClass(/text-destructive/);
+
+  // Manually unmuting hands the mic back to the user.
+  await unmuteButton.click();
   await expect(muteButton).toBeVisible();
   await expect(muteButton).not.toHaveClass(/bg-destructive\/15/);
   await expect(
     page.getByRole("button", { name: "Audio settings" }),
   ).not.toHaveClass(/bg-destructive\/15/);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window.__BUZZ_E2E_COMMAND_LOG__ ?? []).findLast(
+            (entry) => entry.command === "set_huddle_manual_mic_unmuted",
+          )?.payload,
+      ),
+    )
+    .toEqual({ enabled: true });
 
   await muteButton.click();
-  const unmuteButton = page.getByRole("button", {
-    name: "Unmute microphone",
-  });
   await expect(unmuteButton).toBeVisible();
   await expect(unmuteButton).toHaveClass(/bg-destructive\/15/);
   await expect(unmuteButton).toHaveClass(/text-destructive/);
