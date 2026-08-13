@@ -19,7 +19,10 @@ import { ProjectInboxDetail } from "@/features/home/ui/ProjectInboxDetail";
 import { ChannelMembersBar } from "@/features/channels/ui/ChannelMembersBar";
 import { useCommunities } from "@/features/communities/useCommunities";
 import { formatInboxTypeLabel } from "@/features/home/lib/inbox";
-import { hasInboxThreadContext } from "@/features/home/lib/inboxViewHelpers";
+import {
+  hasInboxThreadContext,
+  toTimelineMessage,
+} from "@/features/home/lib/inboxViewHelpers";
 import {
   type InboxDisplayMessage,
   InboxMessageRow,
@@ -35,6 +38,7 @@ import { orderMentionPubkeysByText } from "@/features/messages/lib/orderMentionP
 import { canManageMessageForCurrentUser } from "@/features/messages/lib/canManageMessage";
 import { buildEditMentionState } from "@/features/messages/lib/draftMentionRefs";
 import { imetaMediaFromTags } from "@/features/messages/lib/imetaMediaMarkdown";
+import { buildVideoReviewPresentationByMessageId } from "@/features/messages/lib/videoReviewContext";
 import { getThreadReference } from "@/features/messages/lib/threading";
 import { normalizePubkey } from "@/shared/lib/pubkey";
 import { MessageComposer } from "@/features/messages/ui/MessageComposer";
@@ -46,6 +50,7 @@ import { resolveMentionProps } from "@/shared/lib/resolveMentionNames";
 import { TopChromeInsetHeader } from "@/shared/layout/TopChromeInsetHeader";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
+import { VideoReviewNavigationProvider } from "@/shared/ui/VideoReviewNavigation";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -142,7 +147,11 @@ export function InboxDetailPane(props: InboxDetailPaneProps) {
     );
   }
 
-  return <InboxMessageDetailPane {...props} />;
+  return (
+    <VideoReviewNavigationProvider>
+      <InboxMessageDetailPane {...props} />
+    </VideoReviewNavigationProvider>
+  );
 }
 
 function InboxMessageDetailPane({
@@ -255,11 +264,39 @@ function InboxMessageDetailPane({
               isSelected: true,
               mentionNames: item.mentionNames,
               mentionPubkeysByName: item.mentionPubkeysByName,
+              kind: item.item.kind,
+              parentId: getThreadReference(item.item.tags).parentId,
+              rootId: getThreadReference(item.item.tags).rootId,
+              tags: item.item.tags,
               timeLabel: formatTime(item.item.createdAt),
             },
             ...pendingReplyMessages,
           ]
         : pendingReplyMessages;
+  const videoReviewChannelType =
+    item?.item.channelType === "dm" ||
+    item?.item.channelType === "stream" ||
+    item?.item.channelType === "forum"
+      ? item.item.channelType
+      : null;
+  const videoReviewPresentation = buildVideoReviewPresentationByMessageId({
+    channelId: item?.item.channelId,
+    channelName: contextChannelName ?? item?.channelLabel ?? undefined,
+    channelType: videoReviewChannelType,
+    isSendingVideoReviewComment: isSendingReply,
+    messages: displayMessages.map(toTimelineMessage),
+    onSendVideoReviewComment: canReply
+      ? (message, content, mentionPubkeys, mediaTags, parentEventId) =>
+          onSendReply({
+            content,
+            mediaTags,
+            mentionPubkeys,
+            parentEventId: parentEventId ?? message.id,
+          })
+      : undefined,
+    onToggleReaction,
+    profiles,
+  });
   const { onScroll } = useAnchoredScroll({
     channelId: conversationId,
     contentRef,
@@ -667,6 +704,12 @@ function InboxMessageDetailPane({
                   onSelectReplyTarget={handleSelectReplyTarget}
                   onToggleReaction={onToggleReaction}
                   showUnreadBoundary={hasUnreadBoundary}
+                  videoReviewCommentRootId={videoReviewPresentation.commentRootIdsByMessageId.get(
+                    message.id,
+                  )}
+                  videoReviewContext={videoReviewPresentation.contextsByMessageId.get(
+                    message.id,
+                  )}
                 />
               );
             })}

@@ -100,6 +100,7 @@ import {
   imageLightboxCornerRadiiFromElement,
   imageLightboxCornerRadiiStyle,
   imageLightboxExpandedCornerRadii,
+  getImageLightboxFocusableElements,
   imageLightboxReturnTargetForItem,
   imageLightboxSourceScopeForTrigger,
   imageLightboxStyle,
@@ -146,28 +147,6 @@ type ImageBlockProps = {
 type WebKitGestureLikeEvent = Event & {
   scale?: number;
 };
-
-function getImageLightboxFocusableElements(
-  container: HTMLElement,
-): HTMLElement[] {
-  return Array.from(
-    container.querySelectorAll<HTMLElement>(
-      [
-        "a[href]",
-        "button:not(:disabled)",
-        "input:not(:disabled)",
-        "select:not(:disabled)",
-        "textarea:not(:disabled)",
-        "[tabindex]:not([tabindex='-1'])",
-      ].join(","),
-    ),
-  ).filter(
-    (element) =>
-      !element.hasAttribute("disabled") &&
-      element.getAttribute("aria-hidden") !== "true" &&
-      element.getClientRects().length > 0,
-  );
-}
 
 function ImageZoomOverlay({
   alt,
@@ -1546,7 +1525,8 @@ function createMarkdownComponents(
     ol: ({ children }) => (
       <ol className={cn("list-decimal", listClassName)}>{children}</ol>
     ),
-    p: ({ children }) => {
+    p: function MarkdownParagraph({ children, node }) {
+      const { leadingInlineContent } = useMarkdownRuntime();
       // Detect media-only paragraphs (images + <br> from remarkBreaks).
       // Multi-image: render as a compact, count-aware mosaic. Two images split
       // a row, three form a hero-and-stack triptych, and larger odd counts let
@@ -1564,7 +1544,12 @@ function createMarkdownComponents(
         return <div>{children}</div>;
       }
 
-      return <p>{children}</p>;
+      return (
+        <p>
+          {node?.position?.start.offset === 0 ? leadingInlineContent : null}
+          {children}
+        </p>
+      );
     },
     pre: ({ children }) => {
       if (!interactive) return <span>{children}</span>;
@@ -1769,6 +1754,7 @@ function MarkdownInner({
   imetaByUrl,
   interactive = true,
   agentMentionPubkeysByName,
+  leadingInlineContent,
   mediaInset = false,
   messageId,
   linkPreviewsSuppressed = false,
@@ -1823,6 +1809,7 @@ function MarkdownInner({
       agentMentionPubkeysByName,
       channels,
       imetaByUrl,
+      leadingInlineContent,
       mentionPubkeysByName,
       onOpenChannel,
       onOpenEntityLink,
@@ -1842,6 +1829,7 @@ function MarkdownInner({
       agentMentionPubkeysByName,
       channels,
       imetaByUrl,
+      leadingInlineContent,
       mentionPubkeysByName,
       onOpenChannel,
       onOpenEntityLink,
@@ -1949,6 +1937,7 @@ export const Markdown = React.memo(
     shallowArrayEqual(prev.mentionNames, next.mentionNames) &&
     shallowArrayEqual(prev.channelNames, next.channelNames) &&
     prev.imetaByUrl === next.imetaByUrl &&
+    prev.leadingInlineContent === next.leadingInlineContent &&
     prev.configNudgeAuthorPubkey === next.configNudgeAuthorPubkey &&
     prev.searchQuery === next.searchQuery &&
     prev.snapshotSharedBy === next.snapshotSharedBy &&

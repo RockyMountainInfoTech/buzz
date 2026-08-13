@@ -5,6 +5,7 @@ import { expectCornerRadiusPx, expectSmoothCorners } from "../helpers/css";
 
 const VIDEO_SHA = "b".repeat(64);
 const VIDEO_URL = `http://localhost:3000/media/${VIDEO_SHA}.mp4`;
+const GENERAL_CHANNEL_ID = "9a1657ac-f7aa-5db0-b632-d8bbeb6dfb50";
 const PORTRAIT_VIDEO_SHA = "c".repeat(64);
 const PORTRAIT_VIDEO_URL = `http://localhost:3000/media/${PORTRAIT_VIDEO_SHA}.mp4`;
 const CONSTRAINED_LANDSCAPE_VIDEO_SHA = "d".repeat(64);
@@ -920,9 +921,51 @@ test("video replies in threads open the review comments view", async ({
       parentEventId: root.id,
     },
   )) as { id: string };
-  await emitMockMessage(page, "general", "[00:01] Tighten this transition.", {
-    parentEventId: videoReply.id,
-  });
+  const reviewComment = (await emitMockMessage(
+    page,
+    "general",
+    "[00:01] Tighten this transition.",
+    { parentEventId: videoReply.id },
+  )) as {
+    content: string;
+    created_at: number;
+    id: string;
+    kind: number;
+    pubkey: string;
+    tags: string[][];
+  };
+  await page.evaluate(
+    ({ channelId, comment }) => {
+      const pushFeedItem = (
+        window as Window & {
+          __BUZZ_E2E_PUSH_MOCK_FEED_ITEM__?: (item: {
+            category: "mention";
+            channel_id: string;
+            channel_name: string;
+            content: string;
+            created_at: number;
+            id: string;
+            kind: number;
+            pubkey: string;
+            tags: string[][];
+          }) => unknown;
+        }
+      ).__BUZZ_E2E_PUSH_MOCK_FEED_ITEM__;
+      if (!pushFeedItem) throw new Error("Mock feed helper is unavailable.");
+      pushFeedItem({
+        category: "mention",
+        channel_id: channelId,
+        channel_name: "general",
+        content: comment.content,
+        created_at: comment.created_at,
+        id: comment.id,
+        kind: comment.kind,
+        pubkey: comment.pubkey,
+        tags: comment.tags,
+      });
+    },
+    { channelId: GENERAL_CHANNEL_ID, comment: reviewComment },
+  );
 
   const threadSummary = page.locator(`[data-thread-head-id="${root.id}"]`);
   await expect(threadSummary).toBeVisible();
@@ -950,6 +993,9 @@ test("video replies in threads open the review comments view", async ({
   await expect(outsideTimecode).toHaveAttribute(
     "data-testid",
     "video-review-comment-timecode",
+  );
+  await expect(outsideTimecode.locator("xpath=ancestor::p")).toContainText(
+    "Tighten this transition.",
   );
   const outsideTimecodeStyles = await outsideTimecode.evaluate((element) => {
     const styles = window.getComputedStyle(element);
@@ -1008,6 +1054,31 @@ test("video replies in threads open the review comments view", async ({
   await expect(reviewDialog.getByTestId("video-review-comments")).toContainText(
     "Tighten this transition.",
   );
+
+  await page
+    .getByTestId("video-review-backdrop")
+    .click({ position: { x: 4, y: 4 } });
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  const inboxRow = page.getByTestId(`home-inbox-item-${reviewComment.id}`);
+  await expect(inboxRow).toBeVisible();
+  const inboxPreviewTimecode = inboxRow.getByTestId(
+    "video-review-comment-timecode",
+  );
+  await expect(inboxPreviewTimecode.locator("xpath=ancestor::p")).toContainText(
+    "Tighten this transition.",
+  );
+  await inboxRow.click();
+
+  const inboxDetail = page.getByTestId("home-inbox-detail");
+  const inboxDetailTimecode = inboxDetail.getByRole("button", {
+    name: "Jump to 00:01",
+  });
+  await expect(inboxDetailTimecode).toBeVisible();
+  await expect(inboxDetailTimecode.locator("xpath=ancestor::p")).toContainText(
+    "Tighten this transition.",
+  );
+  await inboxDetailTimecode.click();
+  await expect(page.getByTestId("video-review-dialog")).toBeVisible();
 });
 
 test("message timecodes deterministically open the first attached video", async ({

@@ -17,7 +17,9 @@ type ToggleMessageReaction = (
   remove: boolean,
 ) => Promise<void>;
 
-export function hasVideoAttachment(message: TimelineMessage): boolean {
+export function hasVideoAttachment(
+  message: Pick<TimelineMessage, "body" | "tags">,
+): boolean {
   if (message.body.includes("![video](")) return true;
 
   return (
