@@ -199,6 +199,17 @@ class ComposeBar extends HookConsumerWidget {
     final channelQuery = useState<String?>(null);
     final channelStartIdx = useState(-1);
     final channelsAsync = ref.watch(channelsProvider);
+    final channelNames = {
+      for (final channel in channelsAsync.asData?.value ?? const <Channel>[])
+        channel.name.toLowerCase(): channel.id,
+    };
+    final channelNamesKey = channelNames.entries
+        .map((entry) => '${entry.key}\u0000${entry.value}')
+        .join('\u0001');
+    useEffect(() {
+      controller.setChannelNames(channelNames);
+      return null;
+    }, [controller, channelNamesKey]);
 
     final membersAsync = ref.watch(channelMembersProvider(channelId));
     final sessionStatus = ref.watch(relaySessionProvider).status;

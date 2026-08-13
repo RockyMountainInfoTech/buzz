@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:buzz/features/channels/channel.dart';
 import 'package:buzz/features/channels/channels_provider.dart';
 import 'package:buzz/features/channels/deep_link_dispatcher.dart';
@@ -12,6 +14,40 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import '../../shared/community/community_storage_test.dart';
 
 void main() {
+  testWidgets('queues deep links in arrival order until acknowledged', (
+    tester,
+  ) async {
+    final controller = StreamController<Uri>();
+    PendingDeepLinkNotifier.debugUriStreamOverride = controller.stream;
+    addTearDown(() async {
+      PendingDeepLinkNotifier.debugUriStreamOverride = null;
+      await controller.close();
+    });
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    container.read(pendingDeepLinkProvider);
+
+    const channelId = '580ca78b-9dae-46f3-8854-bd671853ba32';
+    final firstId = 'aa' * 32;
+    final secondId = 'bb' * 32;
+    controller
+      ..add(Uri.parse('buzz://message?channel=$channelId&id=$firstId'))
+      ..add(Uri.parse('buzz://message?channel=$channelId&id=$secondId'));
+    await tester.pump();
+
+    expect(
+      container.read(pendingDeepLinkProvider),
+      MessageDeepLink(channelId: channelId, messageId: firstId),
+    );
+    container.read(pendingDeepLinkProvider.notifier).consume();
+    expect(
+      container.read(pendingDeepLinkProvider),
+      MessageDeepLink(channelId: channelId, messageId: secondId),
+    );
+    container.read(pendingDeepLinkProvider.notifier).consume();
+    expect(container.read(pendingDeepLinkProvider), isNull);
+  });
+
   testWidgets('dispatches a link that is already ready on mount', (
     tester,
   ) async {

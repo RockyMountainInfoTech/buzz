@@ -401,19 +401,20 @@ class MessageContent extends HookConsumerWidget {
       _ => null,
     };
 
-    final linkTextWidget = Text(
-      text,
-      style: isCanonicalBuzzLabel
-          ? baseStyle.copyWith(
+    final authoredLinkStyle = baseStyle.copyWith(
+      color: context.colors.primary,
+      decoration: TextDecoration.underline,
+      decorationColor: context.colors.primary,
+    );
+    final linkTextWidget = isCanonicalBuzzLabel
+        ? Text(
+            text,
+            style: baseStyle.copyWith(
               color: context.colors.primary,
               fontWeight: FontWeight.w600,
-            )
-          : baseStyle.copyWith(
-              color: context.colors.primary,
-              decoration: TextDecoration.underline,
-              decorationColor: context.colors.primary,
             ),
-    );
+          )
+        : Text.rich(TextSpan(style: authoredLinkStyle, children: [linkText]));
 
     final renderedLink = isCanonicalBuzzLabel && buzzPresentation != null
         ? _TokenPill(

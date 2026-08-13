@@ -142,7 +142,12 @@ String buildMessageLink({
 /// become navigation targets.
 ChannelDeepLink? parseChannelDeepLink(Uri uri) {
   if (uri.scheme != 'buzz' || uri.host != 'channel') return null;
-  if (uri.hasQuery || uri.hasFragment || uri.userInfo.isNotEmpty) return null;
+  if (uri.hasQuery ||
+      uri.hasFragment ||
+      uri.userInfo.isNotEmpty ||
+      uri.hasPort) {
+    return null;
+  }
   if (uri.pathSegments.length != 1 || uri.pathSegments.single.isEmpty) {
     return null;
   }
@@ -163,7 +168,10 @@ ChannelDeepLink? parseChannelDeepLink(Uri uri) {
 /// UUID channel; and 64-character hexadecimal message/thread event IDs.
 MessageDeepLink? parseMessageDeepLink(Uri uri) {
   if (uri.scheme != 'buzz' || uri.host != 'message') return null;
-  if (uri.path.isNotEmpty || uri.hasFragment || uri.userInfo.isNotEmpty) {
+  if (uri.path.isNotEmpty ||
+      uri.hasFragment ||
+      uri.userInfo.isNotEmpty ||
+      uri.hasPort) {
     return null;
   }
 

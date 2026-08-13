@@ -143,19 +143,22 @@ bool _spanHasStyle(
   String text,
   bool Function(TextStyle) check,
 ) {
-  var found = false;
-  root.visitChildren((span) {
-    if (span is TextSpan &&
-        span.text != null &&
+  bool visit(InlineSpan span, TextStyle? inheritedStyle) {
+    if (span is! TextSpan) return false;
+    final effectiveStyle = inheritedStyle?.merge(span.style) ?? span.style;
+    if (span.text != null &&
         span.text!.contains(text) &&
-        span.style != null &&
-        check(span.style!)) {
-      found = true;
-      return false; // stop visiting
+        effectiveStyle != null &&
+        check(effectiveStyle)) {
+      return true;
     }
-    return true;
-  });
-  return found;
+    for (final child in span.children ?? const <InlineSpan>[]) {
+      if (visit(child, effectiveStyle)) return true;
+    }
+    return false;
+  }
+
+  return visit(root, null);
 }
 
 class _TestChannelsNotifier extends ChannelsNotifier {
@@ -594,6 +597,7 @@ void main() {
           ),
         );
 
+        container.read(pendingDeepLinkProvider.notifier).consume();
         await tester.tap(find.text(joinUrl));
         await tester.pump();
         expect(
@@ -779,8 +783,11 @@ void main() {
 
         // The URL text should be rendered and tappable.
         expect(find.text('https://example.com'), findsOneWidget);
-        final urlWidget = tester.widget<Text>(find.text('https://example.com'));
-        expect(urlWidget.style?.decoration, TextDecoration.underline);
+        final linkText = tester.widget<Text>(find.text('https://example.com'));
+        expect(
+          linkText.style?.decoration ?? linkText.textSpan?.style?.decoration,
+          TextDecoration.underline,
+        );
       });
     });
 
@@ -1714,6 +1721,22 @@ Photos
           );
           expect(find.text(entry.key), findsOneWidget);
         }
+      });
+
+      testWidgets('preserves formatting in authored Buzz labels', (
+        tester,
+      ) async {
+        const channelId = '580ca78b-9dae-46f3-8854-bd671853ba32';
+        await tester.pumpWidget(
+          _testable(
+            const MessageContent(
+              content: '[**design discussion**](buzz://channel/$channelId)',
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(_hasBoldSpan(tester, 'design discussion'), isTrue);
       });
 
       testWidgets(

@@ -83,13 +83,12 @@ class _DeepLinkDispatcherState extends ConsumerState<DeepLinkDispatcher> {
     // listener re-attempts once data arrives.
     if (channels == null) return;
 
-    ref.read(pendingDeepLinkProvider.notifier).consume();
-
     final channel = channels
         .where((c) => c.id == channelId)
         .cast<Channel?>()
         .firstOrNull;
     if (channel == null) {
+      ref.read(pendingDeepLinkProvider.notifier).consume();
       debugPrint(
         'deep-link: channel $channelId not found in workspace; dropping link',
       );
@@ -113,6 +112,7 @@ class _DeepLinkDispatcherState extends ConsumerState<DeepLinkDispatcher> {
             ),
       ),
     );
+    ref.read(pendingDeepLinkProvider.notifier).consume();
   }
 
   void _maybeDispatchInvite(InviteDeepLink link) {
