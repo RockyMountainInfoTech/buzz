@@ -7,6 +7,7 @@ import {
 
 import { BuzzInlineLink, BuzzLinkChip } from "./BuzzLinkChip";
 import { useMarkdownRuntime } from "./runtimeContext";
+import { getReactNodeText } from "./utils";
 
 function channelPermalinkLabel(
   channels: ReturnType<typeof useMarkdownRuntime>["channels"],
@@ -27,7 +28,7 @@ export function ChannelDeepLinkAnchor({
   if (!href) return <>{children}</>;
   const parsed = parseChannelLink(href);
   if (!parsed.ok) return <>{children}</>;
-  const authoredLabel = String(children ?? "");
+  const authoredLabel = getReactNodeText(children);
   if (authoredLabel !== href) {
     return (
       <BuzzInlineLink

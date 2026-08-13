@@ -1081,7 +1081,7 @@ test("authored Buzz permalink labels remain ordinary links", () => {
   const channelId = "580ca78b-9dae-46f3-8854-bd671853ba32";
   const links = [
     `[the message](buzz://message?channel=${channelId}&id=${EVENT_HEX})`,
-    `[the channel](buzz://channel/${channelId})`,
+    `[**design discussion**](buzz://channel/${channelId})`,
     `[the issue](buzz://issue?id=${EVENT_HEX}&owner=${OWNER_HEX}&d=buzz-world)`,
   ];
   const markdown = renderCachedMarkdown({
@@ -1107,7 +1107,9 @@ test("authored Buzz permalink labels remain ordinary links", () => {
 
   assert.equal((html.match(/data-buzz-link=""/g) ?? []).length, 0);
   assert.match(html, />the message</);
-  assert.match(html, />the channel</);
+  assert.match(html, />design discussion</);
+  assert.match(html, /aria-label="Open channel: design discussion"/);
+  assert.doesNotMatch(html, /\[object Object\]/);
   assert.match(html, />the issue</);
   assert.equal((html.match(/underline-offset-4/g) ?? []).length, 3);
 });
