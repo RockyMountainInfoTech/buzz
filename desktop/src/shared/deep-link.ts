@@ -164,16 +164,17 @@ export async function listenForDeepLinks(
 
 let navigationDrainTail: Promise<void> = Promise.resolve();
 let navigationDrainGeneration = 0;
+let navigationDrainEnabled = true;
 
 export async function resetNavigationDeepLinkDrain(): Promise<void> {
-  navigationDrainGeneration += 1;
-  try {
-    await invoke("clear_pending_navigation_deep_links");
-  } catch (error: unknown) {
-    // A community switch must not strand the app behind its loading gate if
-    // the best-effort native queue cleanup is unavailable. The generation
-    // bump above still prevents in-flight JavaScript drains from acknowledging.
-    console.warn("Failed to clear pending navigation deep links", error);
+  const generation = ++navigationDrainGeneration;
+  // Fail closed while the outgoing community's native queue is being cleared.
+  // A rejected clear leaves that queue's identity unknown, so no later listener
+  // may route it against a different community.
+  navigationDrainEnabled = false;
+  await invoke("clear_pending_navigation_deep_links");
+  if (generation === navigationDrainGeneration) {
+    navigationDrainEnabled = true;
   }
 }
 
@@ -194,11 +195,18 @@ async function drainPendingNavigationDeepLinks(
   ) => boolean | Promise<boolean>,
 ) {
   const generation = navigationDrainGeneration;
-  while (generation === navigationDrainGeneration) {
+  if (!navigationDrainEnabled) return;
+  while (navigationDrainEnabled && generation === navigationDrainGeneration) {
     const pending = await invoke<PendingNavigationDeepLink | null>(
       "take_pending_navigation_deep_link",
     );
-    if (!pending || generation !== navigationDrainGeneration) return;
+    if (
+      !pending ||
+      !navigationDrainEnabled ||
+      generation !== navigationDrainGeneration
+    ) {
+      return;
+    }
     const accepted = await (pending.kind === "channel"
       ? onOpenChannel({ channelId: pending.channelId })
       : pending.messageId

@@ -209,10 +209,26 @@ export function useCommunityInit(
           // store under the outgoing community ID and delete its snapshot.
           prevCommunityIdRef.current = null;
         }
-        await resetCommunityState({
-          resetAvatarState:
-            appliedRelayUrlRef.current !== activeCommunity.relayUrl,
-        });
+        try {
+          await resetCommunityState({
+            resetAvatarState:
+              appliedRelayUrlRef.current !== activeCommunity.relayUrl,
+          });
+        } catch (error) {
+          console.error("Failed to reset community state:", error);
+          if (!cancelled) {
+            setResult({
+              isReady: false,
+              needsSetup: false,
+              appliedKey: null,
+              error:
+                error instanceof Error
+                  ? `Could not safely switch communities: ${error.message}`
+                  : "Could not safely switch communities",
+            });
+          }
+          return;
+        }
       }
       hasInitializedRef.current = true;
       appliedRelayUrlRef.current = activeCommunity.relayUrl;

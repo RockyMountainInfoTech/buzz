@@ -318,21 +318,45 @@ test("community reset stops the stale drain before taking another item", async (
   unlisten();
 });
 
-test("community reset tolerates native queue clear rejection", async () => {
-  const warnings = [];
-  const originalWarn = console.warn;
+test("failed community clear quarantines stale navigation from the next listener", async () => {
+  const stale = {
+    id: "old-community",
+    kind: "channel",
+    channelId: "old-channel",
+    messageId: null,
+    threadRootId: null,
+  };
+  const opened = [];
+  let takeCount = 0;
+
+  ipcHandlers.set("plugin:event|listen", () => nextCallbackId);
+  ipcHandlers.set("plugin:event|unlisten", () => {});
   ipcHandlers.set("clear_pending_navigation_deep_links", () => {
     throw new Error("clear failed");
   });
-  console.warn = (...args) => warnings.push(args);
+  ipcHandlers.set("take_pending_navigation_deep_link", () => {
+    takeCount += 1;
+    return stale;
+  });
 
-  try {
-    await resetNavigationDeepLinkDrain();
-    assert.equal(warnings.length, 1);
-    assert.match(String(warnings[0][1]), /clear failed/);
-  } finally {
-    console.warn = originalWarn;
-  }
+  await assert.rejects(resetNavigationDeepLinkDrain(), /clear failed/);
+  const unlisten = await listenForNavigationDeepLinks(
+    (payload) => {
+      opened.push(payload.channelId);
+      return true;
+    },
+    () => true,
+  );
+  await settle();
+
+  assert.equal(takeCount, 0);
+  assert.deepEqual(opened, []);
+  unlisten();
+
+  // Restore the module-level gate for later tests, just as a successful retry
+  // does in the application.
+  ipcHandlers.set("clear_pending_navigation_deep_links", () => {});
+  await resetNavigationDeepLinkDrain();
 });
 
 test("rejected navigation remains queued and is not acknowledged", async () => {
