@@ -125,6 +125,20 @@ test("real markdown-it parsing materializes mixed Buzz permalink chips", () => {
   assert.match(html, /data-href="buzz:\/\/repo\?owner=a{64}&amp;d=buzz-world/);
 });
 
+test("real markdown-it parsing preserves underscores in restored entity links", () => {
+  const md = new MarkdownIt();
+  registerComposerMessageLinkMarkdownIt(md, {
+    resolveChannelName: () => undefined,
+  });
+  const href = `buzz://repo?owner=${OWNER}&d=my_repo`;
+
+  const html = md.renderInline(href);
+
+  assert.equal((html.match(/data-composer-buzz-link=""/g) ?? []).length, 1);
+  assert.match(html, /data-href="buzz:\/\/repo\?owner=a{64}&amp;d=my_repo"/);
+  assert.doesNotMatch(html, /<\/span>_repo/);
+});
+
 test("markdown parsing resumes after markdown-it consumes the buzz prefix", () => {
   const { rule } = captureMarkdownRule();
   let token = null;

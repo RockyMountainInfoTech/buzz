@@ -30,9 +30,9 @@ export type ComposerMessageLinkAttributes = {
 };
 
 const BARE_BUZZ_LINK_AT_START =
-  /^buzz:\/\/(?:message\?|channel\/|(?:pr|issue|repo)\?)[^\s<>"')\]}*_]+/i;
+  /^buzz:\/\/(?:message\?|channel\/|(?:pr|issue|repo)\?)[^\s<>"')\]}*]+/i;
 const BUZZ_LINK_SUFFIX_AT_START =
-  /^:\/\/(?:message\?|channel\/|(?:pr|issue|repo)\?)[^\s<>"')\]}*_]+/i;
+  /^:\/\/(?:message\?|channel\/|(?:pr|issue|repo)\?)[^\s<>"')\]}*]+/i;
 const TRAILING_PUNCTUATION = /[.,;:!?]+$/;
 
 function trimBareBuzzLink(value: string): string {
