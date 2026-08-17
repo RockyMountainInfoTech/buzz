@@ -249,6 +249,7 @@ pub fn availability_from_events(events: Vec<nostr::Event>) -> MeshAvailability {
                         .map(|target| MeshModelOption {
                             id: target.model_id.clone(),
                             name: target.model_name.clone(),
+                            ..Default::default()
                         })
                         .collect(),
                 )

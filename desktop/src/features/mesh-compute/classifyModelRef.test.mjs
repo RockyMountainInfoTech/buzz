@@ -43,6 +43,14 @@ test("shard safetensors path → invalid", () => {
   assert.equal(result.kind, "invalid");
 });
 
+test(":4bit selector → invalid", () => {
+  const result = classifyModelRef("org/repo:4bit");
+  assert.equal(result.kind, "invalid");
+  if (result.kind === "invalid") {
+    assert.match(result.reason, /cannot pick an MLX folder/i);
+  }
+});
+
 test("plain catalog name → exact", () => {
   assert.deepEqual(classifyModelRef("Qwen3-8B-Q4_K_M"), {
     kind: "exact",

@@ -511,7 +511,10 @@ function MeshModelPicker({
       };
     });
     const localOptions = installedModels.flatMap((installed) => {
-      if (seen.has(installed.id)) return [];
+      const listKey = installed.path ?? installed.id;
+      if (seen.has(listKey)) return [];
+      seen.add(listKey);
+      const canDelete = installed.deletable !== false && !installed.folderUnknown;
       return [
         {
           label: (
@@ -520,29 +523,37 @@ function MeshModelPicker({
                 {installed.name ?? installed.id}
               </span>
               <span className="flex shrink-0 items-center gap-2">
-                <span className="text-2xs text-muted-foreground">
-                  Installed
-                </span>
-                <button
-                  className="text-2xs font-medium text-destructive hover:underline disabled:pointer-events-none disabled:opacity-50"
-                  disabled={disabled}
-                  onClick={async (event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    try {
-                      await meshDeleteInstalledModel(installed.id);
-                      onDeleteInstalled();
-                      if (model.trim() === installed.id) {
-                        onModelChange("");
+                {installed.folderUnknown ? (
+                  <span className="text-2xs text-muted-foreground">
+                    Folder unknown
+                  </span>
+                ) : (
+                  <span className="text-2xs text-muted-foreground">
+                    Installed
+                  </span>
+                )}
+                {canDelete ? (
+                  <button
+                    className="text-2xs font-medium text-destructive hover:underline disabled:pointer-events-none disabled:opacity-50"
+                    disabled={disabled}
+                    onClick={async (event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      try {
+                        await meshDeleteInstalledModel(installed.id);
+                        onDeleteInstalled();
+                        if (model.trim() === installed.id) {
+                          onModelChange("");
+                        }
+                      } catch {
+                        // Parent surfaces action errors; keep the picker usable.
                       }
-                    } catch {
-                      // Parent surfaces action errors; keep the picker usable.
-                    }
-                  }}
-                  type="button"
-                >
-                  Delete
-                </button>
+                    }}
+                    type="button"
+                  >
+                    Delete
+                  </button>
+                ) : null}
               </span>
             </div>
           ),
@@ -601,7 +612,7 @@ function MeshModelPicker({
             onCustomModelEditingChange(true);
             onModelChange(event.target.value);
           }}
-          placeholder="Qwen3-8B-Q4_K_M or unsloth/gemma-4-E4B-it-GGUF:Q4_K_M"
+          placeholder="Qwen3-8B-Q4_K_M or org/repo:Q4_K_M"
           usePersonaInputStyle
           value={model}
         />
@@ -615,7 +626,7 @@ function MeshModelPicker({
       >
         {catalog
           ? `Recommended for this machine${catalog.gpuName ? ` (${catalog.gpuName}, ${catalog.vramDisplay} AI memory)` : ""}.`
-          : "Choose a catalog model or enter an exact Mesh model ref."}{" "}
+          : "Choose a catalog model or enter an exact Mesh model ref (catalog id or org/repo:Q4_K_M)."}{" "}
         Buzz downloads remote models when sharing starts.
       </p>
     </div>

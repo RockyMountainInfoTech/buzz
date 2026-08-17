@@ -7,6 +7,12 @@ export type MeshHealth =
 export type MeshModelOption = {
   id: string;
   name: string | null;
+  /** On-disk artifact path from `scan_installed_models`. */
+  path?: string | null;
+  /** Cache eviction is available for this artifact. */
+  deletable?: boolean;
+  /** Bare multi-folder MLX repo — folder unknown. */
+  folderUnknown?: boolean;
 };
 
 export type MeshNodeState =
