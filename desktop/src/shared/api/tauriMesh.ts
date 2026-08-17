@@ -77,6 +77,20 @@ export async function meshInstalledModels(): Promise<MeshModelOption[]> {
   return await invokeTauri<MeshModelOption[]>("mesh_installed_models");
 }
 
+export type MeshDeleteInstalledModelResult = {
+  deletedPaths: string[];
+  reclaimedBytes: number;
+};
+
+export async function meshDeleteInstalledModel(
+  modelRef: string,
+): Promise<MeshDeleteInstalledModelResult> {
+  return await invokeTauri<MeshDeleteInstalledModelResult>(
+    "mesh_delete_installed_model",
+    { modelRef },
+  );
+}
+
 export type MeshModelFit = "comfortable" | "tight" | "tradeoff" | "too_large";
 
 export type MeshCatalogEntry = {

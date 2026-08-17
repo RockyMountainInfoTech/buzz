@@ -17,6 +17,11 @@ mod catalog;
 pub(crate) use catalog::canonical_curated_model_id;
 pub use catalog::{model_catalog, MeshModelCatalog};
 
+mod model_ref;
+pub(crate) use model_ref::{
+    installed_models_from_disk, reject_share_model_ref_input, resolve_share_model_ref,
+};
+
 mod identity;
 pub use identity::ensure_owner_identity;
 

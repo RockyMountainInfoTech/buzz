@@ -8,52 +8,61 @@ test("empty string → unknown", () => {
   assert.deepEqual(classifyModelRef("   "), { kind: "unknown" });
 });
 
-test("hf:// prefix → huggingface", () => {
-  assert.deepEqual(classifyModelRef("hf://meshllm/qwen3-8b@main"), {
-    kind: "huggingface",
-    ref: "hf://meshllm/qwen3-8b@main",
-  });
+test("hf:// prefix → invalid", () => {
+  const result = classifyModelRef("hf://meshllm/qwen3-8b@main");
+  assert.equal(result.kind, "invalid");
+  if (result.kind === "invalid") {
+    assert.match(result.reason, /hf:\/\//);
+  }
 });
 
-test("absolute path → local-path", () => {
-  assert.deepEqual(classifyModelRef("/Users/me/models/qwen.gguf"), {
-    kind: "local-path",
-    path: "/Users/me/models/qwen.gguf",
-  });
+test("absolute path → invalid", () => {
+  const result = classifyModelRef("/Users/me/models/qwen.gguf");
+  assert.equal(result.kind, "invalid");
 });
 
-test("relative path with ./ → local-path", () => {
-  assert.deepEqual(classifyModelRef("./models/qwen.gguf"), {
-    kind: "local-path",
-    path: "./models/qwen.gguf",
-  });
+test("relative path with ./ → invalid", () => {
+  const result = classifyModelRef("./models/qwen.gguf");
+  assert.equal(result.kind, "invalid");
 });
 
-test("home shortcut → local-path", () => {
-  assert.deepEqual(classifyModelRef("~/models/qwen.gguf"), {
-    kind: "local-path",
-    path: "~/models/qwen.gguf",
-  });
+test("home shortcut → invalid", () => {
+  const result = classifyModelRef("~/models/qwen.gguf");
+  assert.equal(result.kind, "invalid");
 });
 
-test(".gguf extension without path prefix → local-path", () => {
-  // Bare filename ending in .gguf — user clearly means a file.
-  assert.deepEqual(classifyModelRef("my-model.gguf"), {
-    kind: "local-path",
-    path: "my-model.gguf",
-  });
+test(".gguf extension without path prefix → invalid", () => {
+  const result = classifyModelRef("my-model.gguf");
+  assert.equal(result.kind, "invalid");
 });
 
-test("plain name → catalog", () => {
+test("shard safetensors path → invalid", () => {
+  const result = classifyModelRef(
+    "PocketAiHub/Qwen3.8-27B-Abliterated-MLX/4bit/model-00001-of-00003.safetensors",
+  );
+  assert.equal(result.kind, "invalid");
+});
+
+test("plain catalog name → exact", () => {
   assert.deepEqual(classifyModelRef("Qwen3-8B-Q4_K_M"), {
-    kind: "catalog",
-    name: "Qwen3-8B-Q4_K_M",
+    kind: "exact",
+    ref: "Qwen3-8B-Q4_K_M",
   });
+});
+
+test("org/repo:QUANT → exact", () => {
+  assert.deepEqual(
+    classifyModelRef("unsloth/gemma-4-E4B-it-GGUF:Q4_K_M"),
+    {
+      kind: "exact",
+      ref: "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M",
+    },
+  );
 });
 
 test("trims whitespace before classifying", () => {
   assert.deepEqual(classifyModelRef("  Qwen3-8B-Q4_K_M  "), {
-    kind: "catalog",
-    name: "Qwen3-8B-Q4_K_M",
+    kind: "exact",
+    ref: "Qwen3-8B-Q4_K_M",
   });
 });

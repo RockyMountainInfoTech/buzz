@@ -16,6 +16,7 @@ import {
 } from "@/features/agents/ui/agentConfigOptions";
 
 import {
+  meshDeleteInstalledModel,
   meshStartNode,
   meshStopNode,
   meshInstalledModels,
@@ -185,7 +186,10 @@ export function MeshComputeSettingsCard() {
   // occupants remain locked until stopped/recovered.
   const controlsDisabled = actionInFlight || (slotOccupied && !isConsuming);
   const refClass = classifyModelRef(modelInput);
-  const canStart = refClass.kind !== "unknown" && !actionInFlight;
+  const canStart =
+    refClass.kind === "exact" && !actionInFlight;
+  const modelRefError =
+    refClass.kind === "invalid" ? refClass.reason : null;
   const showSharingControls = isSharing || pendingAction === "start";
 
   async function handleToggle(next: boolean) {
@@ -288,7 +292,9 @@ export function MeshComputeSettingsCard() {
             installedModels={installedModels}
             isCustomModelEditing={isCustomModelEditing}
             model={modelInput}
+            modelRefError={modelRefError}
             onCustomModelEditingChange={setIsCustomModelEditing}
+            onDeleteInstalled={refreshInstalled}
             onModelChange={(next) => {
               setModelInput(next);
               writeDraft(MODEL_DRAFT_STORAGE_KEY, next);
@@ -479,7 +485,9 @@ function MeshModelPicker({
   installedModels,
   isCustomModelEditing,
   model,
+  modelRefError,
   onCustomModelEditingChange,
+  onDeleteInstalled,
   onModelChange,
 }: {
   catalog: MeshModelCatalog | null;
@@ -487,7 +495,9 @@ function MeshModelPicker({
   installedModels: readonly MeshModelOption[];
   isCustomModelEditing: boolean;
   model: string;
+  modelRefError: string | null;
   onCustomModelEditingChange: (editing: boolean) => void;
+  onDeleteInstalled: () => void;
   onModelChange: (model: string) => void;
 }) {
   const options = React.useMemo<AgentDropdownOption[]>(() => {
@@ -509,8 +519,30 @@ function MeshModelPicker({
               <span className="min-w-0 truncate">
                 {installed.name ?? installed.id}
               </span>
-              <span className="shrink-0 text-2xs text-muted-foreground">
-                Installed
+              <span className="flex shrink-0 items-center gap-2">
+                <span className="text-2xs text-muted-foreground">
+                  Installed
+                </span>
+                <button
+                  className="text-2xs font-medium text-destructive hover:underline disabled:pointer-events-none disabled:opacity-50"
+                  disabled={disabled}
+                  onClick={async (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    try {
+                      await meshDeleteInstalledModel(installed.id);
+                      onDeleteInstalled();
+                      if (model.trim() === installed.id) {
+                        onModelChange("");
+                      }
+                    } catch {
+                      // Parent surfaces action errors; keep the picker usable.
+                    }
+                  }}
+                  type="button"
+                >
+                  Delete
+                </button>
               </span>
             </div>
           ),
@@ -523,7 +555,7 @@ function MeshModelPicker({
       ...localOptions,
       { label: "Custom model…", value: CUSTOM_MODEL_DROPDOWN_VALUE },
     ];
-  }, [catalog?.entries, installedModels]);
+  }, [catalog?.entries, disabled, installedModels, model, onDeleteInstalled]);
   const knownModel = options.some((option) => option.value === model.trim());
   const showCustomModelInput =
     isCustomModelEditing || (model.trim().length > 0 && !knownModel);
@@ -569,10 +601,13 @@ function MeshModelPicker({
             onCustomModelEditingChange(true);
             onModelChange(event.target.value);
           }}
-          placeholder="Qwen3-8B-Q4_K_M or hf://meshllm/qwen3-8b@main"
+          placeholder="Qwen3-8B-Q4_K_M or unsloth/gemma-4-E4B-it-GGUF:Q4_K_M"
           usePersonaInputStyle
           value={model}
         />
+      ) : null}
+      {modelRefError ? (
+        <p className="text-sm font-normal text-destructive">{modelRefError}</p>
       ) : null}
       <p
         className="text-sm font-normal text-muted-foreground/70"
@@ -580,7 +615,7 @@ function MeshModelPicker({
       >
         {catalog
           ? `Recommended for this machine${catalog.gpuName ? ` (${catalog.gpuName}, ${catalog.vramDisplay} AI memory)` : ""}.`
-          : "Choose a model or enter a model reference or local file."}{" "}
+          : "Choose a catalog model or enter an exact Mesh model ref."}{" "}
         Buzz downloads remote models when sharing starts.
       </p>
     </div>
