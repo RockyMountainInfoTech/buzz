@@ -868,9 +868,14 @@ pub async fn mesh_delete_installed_model(model_ref: String) -> CmdResult<MeshDel
     tokio::task::spawn_blocking(move || mesh_llm::refuse_installed_model_delete(&guard_ref))
         .await
         .map_err(|error| format!("mesh delete guard task failed: {error}"))??;
-    let result = mesh_llm_host_runtime::models::delete::delete_model_by_identifier(&model_ref)
-        .await
-        .map_err(|error| format!("{error:#}"))?;
+    let cache = mesh_llm_node::models::default_huggingface_cache_dir();
+    let result = mesh_llm_node::models::delete_model(
+        &model_ref,
+        cache,
+        mesh_llm_node::models::DeleteModelOptions::default(),
+    )
+    .await
+    .map_err(|error| format!("{error:#}"))?;
     Ok(MeshDeleteInstalledModelResult {
         deleted_paths: result
             .deleted_paths
