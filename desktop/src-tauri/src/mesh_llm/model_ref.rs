@@ -14,6 +14,7 @@ use mesh_llm_host_runtime::models::{
     ModelDetails,
 };
 use mesh_llm_node::models::InstalledModel;
+use serde::Deserialize;
 
 use super::MeshModelOption;
 
@@ -90,7 +91,7 @@ fn contains_bit_folder_pointer(input: &str) -> bool {
     false
 }
 
-fn huggingface_download_file_path(download_url: &str) -> Option<String> {
+fn huggingface_resolve_parts(download_url: &str) -> Option<(String, Option<String>, String)> {
     let tail = download_url
         .strip_prefix("https://huggingface.co/")
         .or_else(|| download_url.strip_prefix("http://huggingface.co/"))?;
@@ -98,7 +99,15 @@ fn huggingface_download_file_path(download_url: &str) -> Option<String> {
     if parts.len() < 5 || parts.get(2) != Some(&"resolve") {
         return None;
     }
-    Some(parts[4..].join("/"))
+    Some((
+        format!("{}/{}", parts[0], parts[1]),
+        parts.get(3).map(|value| value.to_string()),
+        parts[4..].join("/"),
+    ))
+}
+
+fn huggingface_download_file_path(download_url: &str) -> Option<String> {
+    huggingface_resolve_parts(download_url).map(|(_, _, file)| file)
 }
 
 fn resolved_under_bit_folder(download_url: &str) -> bool {
@@ -106,37 +115,190 @@ fn resolved_under_bit_folder(download_url: &str) -> bool {
         .is_some_and(|path| path.split('/').any(is_bit_folder_segment))
 }
 
-fn repo_only_huggingface_input(input: &str, details: &ModelDetails) -> bool {
-    if details.source != "huggingface" {
+fn base_huggingface_repo(input: &str) -> Option<String> {
+    let trimmed = input.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(tail) = trimmed
+        .strip_prefix("https://huggingface.co/")
+        .or_else(|| trimmed.strip_prefix("http://huggingface.co/"))
+    {
+        let parts: Vec<&str> = tail.split('/').collect();
+        if parts.len() < 2 {
+            return None;
+        }
+        if parts.len() >= 3 && matches!(parts[2], "tree" | "resolve" | "blob") {
+            return Some(format!("{}/{}", parts[0], parts[1]));
+        }
+        if parts.len() == 2 {
+            return Some(format!("{}/{}", parts[0], parts[1]));
+        }
+        return None;
+    }
+
+    let without_selector = trimmed.split_once(':').map(|(left, _)| left).unwrap_or(trimmed);
+    let parts: Vec<&str> = without_selector.split('/').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let repo_tail = parts[1].split('@').next()?;
+    if repo_tail.is_empty() {
+        return None;
+    }
+    Some(format!("{}/{}", parts[0], repo_tail))
+}
+
+fn input_specifies_hf_file_path(input: &str) -> bool {
+    let trimmed = input.trim();
+    if huggingface_resolve_parts(trimmed).is_some() {
+        return true;
+    }
+    if trimmed.contains("://") {
         return false;
     }
+    let without_selector = trimmed.split_once(':').map(|(left, _)| left).unwrap_or(trimmed);
+    without_selector.split('/').count() >= 3
+}
+
+fn has_explicit_gguf_quant_selector(input: &str) -> bool {
     let trimmed = input.trim();
-    if trimmed.contains('/') {
-        // org/repo/subpath or org/repo@rev/subpath — not repo-only.
-        let without_scheme = trimmed
-            .strip_prefix("https://huggingface.co/")
-            .or_else(|| trimmed.strip_prefix("http://huggingface.co/"))
-            .unwrap_or(trimmed);
-        let segments: Vec<&str> = without_scheme.split('/').collect();
-        if segments.len() > 2 {
-            return false;
-        }
+    let Some((left, selector)) = trimmed.rsplit_once(':') else {
+        return false;
+    };
+    if left.is_empty() || selector.is_empty() {
+        return false;
     }
-    trimmed == details.exact_ref
-        || trimmed
-            .strip_prefix("https://huggingface.co/")
-            .is_some_and(|value| value == details.exact_ref)
-        || trimmed
-            .strip_prefix("http://huggingface.co/")
-            .is_some_and(|value| value == details.exact_ref)
+    let selector = selector.split('@').next().unwrap_or(selector);
+    if is_bit_folder_segment(selector) {
+        return false;
+    }
+    selector.contains('_') || selector.starts_with('Q')
+}
+
+fn resolved_huggingface_repo(details: &ModelDetails) -> Option<String> {
+    huggingface_resolve_parts(&details.download_url).map(|(repo, _, _)| repo)
+}
+
+/// True when the user did not pick a file, quant, or MLX folder — including HF
+/// aliases (`org/repo/`, tree URLs, `@rev` mismatch) and catalog ids.
+fn implicit_repo_level_input(input: &str, details: &ModelDetails) -> bool {
+    if input_specifies_hf_file_path(input) || has_explicit_gguf_quant_selector(input) {
+        return false;
+    }
+    if details.source == "catalog" {
+        return true;
+    }
+    match (base_huggingface_repo(input), resolved_huggingface_repo(details)) {
+        (Some(input_repo), Some(resolved_repo)) => input_repo == resolved_repo,
+        _ => false,
+    }
 }
 
 pub(crate) fn refuse_implicit_mlx_folder_pick(
     input: &str,
     details: &ModelDetails,
 ) -> Result<(), String> {
-    if repo_only_huggingface_input(input, details) && resolved_under_bit_folder(&details.download_url)
+    if implicit_repo_level_input(input, details)
+        && resolved_under_bit_folder(&details.download_url)
     {
+        return Err(MLX_FOLDER_REFUSAL_MESSAGE.to_string());
+    }
+    Ok(())
+}
+
+fn is_mlx_kind(kind: &str) -> bool {
+    kind.contains("MLX")
+}
+
+fn is_split_mlx_first_shard(basename: &str) -> bool {
+    let Some(rest) = basename.strip_prefix("model-") else {
+        return false;
+    };
+    let Some(rest) = rest.strip_suffix(".safetensors") else {
+        return false;
+    };
+    let Some((left, right)) = rest.split_once("-of-") else {
+        return false;
+    };
+    left == "00001" && right.len() == 5 && right.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn is_mlx_weight_path(path: &str) -> bool {
+    let basename = path.rsplit('/').next().unwrap_or(path);
+    basename == "model.safetensors" || is_split_mlx_first_shard(basename)
+}
+
+fn mlx_weight_variant_folders_from_paths(paths: &[String]) -> BTreeSet<String> {
+    let mut folders = BTreeSet::new();
+    for path in paths {
+        if !is_mlx_weight_path(path) {
+            continue;
+        }
+        let Some((folder, _)) = path.split_once('/') else {
+            continue;
+        };
+        if !folder.is_empty() {
+            folders.insert(folder.to_ascii_lowercase());
+        }
+    }
+    folders
+}
+
+#[derive(Debug, Deserialize)]
+struct HfSibling {
+    rfilename: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct HfModelRevision {
+    siblings: Option<Vec<HfSibling>>,
+}
+
+async fn fetch_hf_sibling_paths(repo: &str, revision: &str) -> Result<Vec<String>, String> {
+    let url = format!("https://huggingface.co/api/models/{repo}/revision/{revision}");
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .user_agent(format!("buzz-desktop/mesh-ref"))
+        .build()
+        .map_err(|error| error.to_string())?
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?
+        .json::<HfModelRevision>()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(response
+        .siblings
+        .unwrap_or_default()
+        .into_iter()
+        .map(|sibling| sibling.rfilename)
+        .collect())
+}
+
+async fn refuse_repo_only_multi_folder_mlx(
+    input: &str,
+    details: &ModelDetails,
+    variants: Option<&[ModelDetails]>,
+) -> Result<(), String> {
+    if !implicit_repo_level_input(input, details) || !is_mlx_kind(&details.kind) {
+        return Ok(());
+    }
+    if variants.is_some_and(|entries| !entries.is_empty()) {
+        return Ok(());
+    }
+    let Some((repo, revision, _file)) = huggingface_resolve_parts(&details.download_url) else {
+        return Ok(());
+    };
+    let revision = revision.as_deref().unwrap_or("main");
+    let sibling_paths = fetch_hf_sibling_paths(&repo, revision).await?;
+    if mlx_weight_variant_folders_from_paths(&sibling_paths).len() > 1 {
         return Err(MLX_FOLDER_REFUSAL_MESSAGE.to_string());
     }
     Ok(())
@@ -154,10 +316,13 @@ pub async fn resolve_share_model_ref(input: &str) -> Result<String, String> {
 
     refuse_implicit_mlx_folder_pick(trimmed, &details)?;
 
-    if let Some(variants) = show_model_variants_with_progress(trimmed, |_| {})
+    let variants = show_model_variants_with_progress(trimmed, |_| {})
         .await
-        .map_err(|error| format!("{error:#}"))?
-    {
+        .map_err(|error| format!("{error:#}"))?;
+
+    refuse_repo_only_multi_folder_mlx(trimmed, &details, variants.as_deref()).await?;
+
+    if let Some(variants) = variants {
         if variants.len() > 1 && trimmed != details.exact_ref {
             let list = variants
                 .iter()
@@ -198,15 +363,21 @@ fn huggingface_repo_id(path: &Path) -> Option<String> {
     None
 }
 
-fn bit_folder_in_relative_path(relative: &str) -> Option<String> {
-    relative
-        .split('/')
-        .find(|segment| is_bit_folder_segment(segment))
-        .map(ToString::to_string)
+fn variant_folder_key(relative: &str) -> Option<Option<String>> {
+    let path = Path::new(relative);
+    let file_name = path.file_name()?.to_str()?;
+    if !is_mlx_weight_path(file_name) {
+        return None;
+    }
+    let parent = path
+        .parent()
+        .and_then(|value| value.as_os_str().to_str())
+        .filter(|value| !value.is_empty());
+    Some(parent.map(str::to_ascii_lowercase))
 }
 
-fn multi_bit_folder_repos(installed: &[InstalledModel]) -> BTreeSet<String> {
-    let mut folders_by_repo: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+fn multi_variant_folder_repos(installed: &[InstalledModel]) -> BTreeSet<String> {
+    let mut folders_by_repo: BTreeMap<String, BTreeSet<Option<String>>> = BTreeMap::new();
     for model in installed {
         let Some(repo_id) = huggingface_repo_id(&model.path) else {
             continue;
@@ -214,13 +385,13 @@ fn multi_bit_folder_repos(installed: &[InstalledModel]) -> BTreeSet<String> {
         let Some(relative) = snapshot_relative_path(&model.path) else {
             continue;
         };
-        let Some(folder) = bit_folder_in_relative_path(&relative) else {
+        let Some(folder_key) = variant_folder_key(&relative) else {
             continue;
         };
         folders_by_repo
             .entry(repo_id)
             .or_default()
-            .insert(folder);
+            .insert(folder_key);
     }
     folders_by_repo
         .into_iter()
@@ -244,11 +415,10 @@ fn refuse_installed_model_delete_for_scan(
     if trimmed.is_empty() {
         return Err("modelRef is required".to_string());
     }
-    let ambiguous_repos = multi_bit_folder_repos(installed);
-    if installed
-        .iter()
-        .any(|model| model.model_ref == trimmed && installed_model_is_folder_unknown(model, &ambiguous_repos))
-    {
+    let ambiguous_repos = multi_variant_folder_repos(installed);
+    if installed.iter().any(|model| {
+        model.model_ref == trimmed && installed_model_is_folder_unknown(model, &ambiguous_repos)
+    }) {
         return Err(AMBIGUOUS_MLX_DELETE_REFUSAL_MESSAGE.to_string());
     }
     Ok(())
@@ -275,7 +445,7 @@ fn installed_display_name(model: &InstalledModel, folder_unknown: bool) -> Strin
 pub fn installed_models_from_disk() -> Vec<MeshModelOption> {
     let cache = mesh_llm_node::models::default_huggingface_cache_dir();
     let installed = mesh_llm_node::models::scan_installed_models(cache);
-    let ambiguous_repos = multi_bit_folder_repos(&installed);
+    let ambiguous_repos = multi_variant_folder_repos(&installed);
 
     installed
         .into_iter()
@@ -298,11 +468,19 @@ mod tests {
     use mesh_llm_host_runtime::models::ModelCapabilities;
 
     fn test_details(exact_ref: &str, download_url: &str) -> ModelDetails {
+        test_details_with_source(exact_ref, download_url, "huggingface")
+    }
+
+    fn test_details_with_source(
+        exact_ref: &str,
+        download_url: &str,
+        source: &'static str,
+    ) -> ModelDetails {
         ModelDetails {
             display_name: exact_ref.to_string(),
             exact_ref: exact_ref.to_string(),
-            source: "huggingface",
-            kind: "mlx",
+            source,
+            kind: "🍎 MLX",
             download_url: download_url.to_string(),
             size_label: None,
             description: None,
@@ -381,12 +559,53 @@ mod tests {
     }
 
     #[test]
+    fn refuse_implicit_mlx_folder_pick_for_hf_aliases() {
+        let details = test_details(
+            "org/repo@main",
+            "https://huggingface.co/org/repo/resolve/main/2bit/model-00001-of-00003.safetensors",
+        );
+        for alias in [
+            "org/repo/",
+            "https://huggingface.co/org/repo/",
+            "https://huggingface.co/org/repo/tree/main",
+            "org/repo@dev",
+        ] {
+            assert!(
+                refuse_implicit_mlx_folder_pick(alias, &details).is_err(),
+                "alias must refuse: {alias}"
+            );
+        }
+    }
+
+    #[test]
+    fn refuse_implicit_mlx_folder_pick_for_catalog_nested_bit_folder() {
+        let details = test_details_with_source(
+            "catalog-mlx",
+            "https://huggingface.co/org/repo/resolve/main/2bit/model-00001-of-00003.safetensors",
+            "catalog",
+        );
+        assert!(refuse_implicit_mlx_folder_pick("catalog-mlx", &details).is_err());
+    }
+
+    #[test]
     fn allow_repo_root_mlx_resolve() {
         let details = test_details(
             "mlx-community/foo-8bit",
             "https://huggingface.co/mlx-community/foo-8bit/resolve/main/model.safetensors",
         );
         refuse_implicit_mlx_folder_pick("mlx-community/foo-8bit", &details).expect("repo-root mlx");
+    }
+
+    #[test]
+    fn mlx_weight_variant_folders_detects_non_bit_variant_folders() {
+        let folders = mlx_weight_variant_folders_from_paths(&[
+            "fp16/model.safetensors".to_string(),
+            "int4/model-00001-of-00002.safetensors".to_string(),
+            "README.md".to_string(),
+        ]);
+        assert_eq!(folders.len(), 2);
+        assert!(folders.contains("fp16"));
+        assert!(folders.contains("int4"));
     }
 
     #[test]
@@ -400,7 +619,7 @@ mod tests {
     }
 
     #[test]
-    fn flags_multi_bit_folder_repos_from_absolute_hub_paths() {
+    fn flags_multi_variant_folder_repos_from_absolute_hub_paths() {
         let installed = vec![
             InstalledModel {
                 model_ref: "org/demo-mlx".to_string(),
@@ -417,13 +636,13 @@ mod tests {
                 path: absolute_hub_shard_path(
                     "org/demo-mlx",
                     "abc123def456",
-                    "6bit/model-00001-of-00002.safetensors",
+                    "fp16/model-00001-of-00002.safetensors",
                 ),
                 size_bytes: None,
                 capabilities: Default::default(),
             },
         ];
-        let ambiguous = multi_bit_folder_repos(&installed);
+        let ambiguous = multi_variant_folder_repos(&installed);
         assert!(ambiguous.contains("org/demo-mlx"));
         assert!(installed_model_is_folder_unknown(&installed[0], &ambiguous));
     }
@@ -455,5 +674,21 @@ mod tests {
         let err = refuse_installed_model_delete_for_scan("org/demo-mlx", &installed)
             .expect_err("ambiguous mlx delete must be refused");
         assert_eq!(err, AMBIGUOUS_MLX_DELETE_REFUSAL_MESSAGE);
+    }
+
+    #[test]
+    fn allow_installed_model_delete_for_single_exact_gguf_artifact() {
+        let installed = vec![InstalledModel {
+            model_ref: "org/demo-gguf:Q4_K_M".to_string(),
+            path: absolute_hub_shard_path(
+                "org/demo-gguf",
+                "abc123def456",
+                "model-Q4_K_M.gguf",
+            ),
+            size_bytes: None,
+            capabilities: Default::default(),
+        }];
+        refuse_installed_model_delete_for_scan("org/demo-gguf:Q4_K_M", &installed)
+            .expect("single gguf artifact delete must be allowed");
     }
 }

@@ -294,6 +294,7 @@ export function MeshComputeSettingsCard() {
             model={modelInput}
             modelRefError={modelRefError}
             onCustomModelEditingChange={setIsCustomModelEditing}
+            onDeleteError={setActionError}
             onDeleteInstalled={refreshInstalled}
             onModelChange={(next) => {
               setModelInput(next);
@@ -487,6 +488,7 @@ function MeshModelPicker({
   model,
   modelRefError,
   onCustomModelEditingChange,
+  onDeleteError,
   onDeleteInstalled,
   onModelChange,
 }: {
@@ -497,6 +499,7 @@ function MeshModelPicker({
   model: string;
   modelRefError: string | null;
   onCustomModelEditingChange: (editing: boolean) => void;
+  onDeleteError: (message: string) => void;
   onDeleteInstalled: () => void;
   onModelChange: (model: string) => void;
 }) {
@@ -511,7 +514,9 @@ function MeshModelPicker({
       };
     });
     const localOptions = installedModels.flatMap((installed) => {
-      const listKey = installed.path ?? installed.id;
+      const listKey = installed.folderUnknown
+        ? installed.id
+        : (installed.path ?? installed.id);
       if (seen.has(listKey)) return [];
       seen.add(listKey);
       const canDelete = installed.deletable !== false && !installed.folderUnknown;
@@ -545,8 +550,10 @@ function MeshModelPicker({
                         if (model.trim() === installed.id) {
                           onModelChange("");
                         }
-                      } catch {
-                        // Parent surfaces action errors; keep the picker usable.
+                      } catch (err) {
+                        onDeleteError(
+                          err instanceof Error ? err.message : String(err),
+                        );
                       }
                     }}
                     type="button"
@@ -566,7 +573,15 @@ function MeshModelPicker({
       ...localOptions,
       { label: "Custom model…", value: CUSTOM_MODEL_DROPDOWN_VALUE },
     ];
-  }, [catalog?.entries, disabled, installedModels, model, onDeleteInstalled]);
+  }, [
+    catalog?.entries,
+    disabled,
+    installedModels,
+    model,
+    onDeleteError,
+    onDeleteInstalled,
+    onModelChange,
+  ]);
   const knownModel = options.some((option) => option.value === model.trim());
   const showCustomModelInput =
     isCustomModelEditing || (model.trim().length > 0 && !knownModel);
