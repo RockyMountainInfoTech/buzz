@@ -12,8 +12,19 @@ test("hf:// prefix → invalid", () => {
   const result = classifyModelRef("hf://meshllm/qwen3-8b@main");
   assert.equal(result.kind, "invalid");
   if (result.kind === "invalid") {
-    assert.match(result.reason, /hf:\/\//);
+    assert.match(result.reason, /not a Share model ref/i);
+    assert.doesNotMatch(result.reason, /layer package/i);
   }
+});
+
+test(":6bit selector → invalid", () => {
+  const result = classifyModelRef("org/repo:6bit");
+  assert.equal(result.kind, "invalid");
+});
+
+test("/4bit path without shard → invalid", () => {
+  const result = classifyModelRef("org/repo/4bit");
+  assert.equal(result.kind, "invalid");
 });
 
 test("absolute path → invalid", () => {

@@ -345,6 +345,9 @@ pub(crate) async fn restore_mesh_sharing(app: &AppHandle, state: &AppState) -> C
         return Ok(());
     }
     config.model_id = mesh_llm::canonical_curated_model_id(&config.model_id).to_string();
+    config.model_id = mesh_llm::resolve_share_model_ref(&config.model_id)
+        .await
+        .map_err(|error| format!("failed to restore Share Compute: {error}"))?;
     if state.mesh_llm_runtime.lock().await.is_some() {
         return Ok(());
     }
@@ -857,11 +860,15 @@ pub struct MeshDeleteInstalledModelResult {
 /// and does not touch `/v1/models` — cache eviction only.
 #[tauri::command]
 pub async fn mesh_delete_installed_model(model_ref: String) -> CmdResult<MeshDeleteInstalledModelResult> {
-    let model_ref = model_ref.trim();
+    let model_ref = model_ref.trim().to_string();
     if model_ref.is_empty() {
         return Err("modelRef is required".to_string());
     }
-    let result = mesh_llm_host_runtime::models::delete_model_by_identifier(model_ref)
+    let guard_ref = model_ref.clone();
+    tokio::task::spawn_blocking(move || mesh_llm::refuse_installed_model_delete(&guard_ref))
+        .await
+        .map_err(|error| format!("mesh delete guard task failed: {error}"))??;
+    let result = mesh_llm_host_runtime::models::delete_model_by_identifier(&model_ref)
         .await
         .map_err(|error| format!("{error:#}"))?;
     Ok(MeshDeleteInstalledModelResult {

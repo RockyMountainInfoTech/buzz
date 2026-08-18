@@ -3,9 +3,8 @@
 //!
 //! Share accepts only refs that Mesh v0.75.1 resolves through
 //! `show_exact_model` / `parse_exact_model_ref` (catalog id, Hugging Face exact
-//! ref, MLX repo shorthand). Layer-package `hf://` refs, local file paths,
-//! shard pointers, and MLX bit-folder selectors are rejected here because they
-//! use different Mesh entry points or are not supported on this pin.
+//! ref, MLX repo shorthand). `hf://` refs, local file paths, shard pointers,
+//! and MLX bit-folder selectors are rejected here.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -21,6 +20,12 @@ use super::MeshModelOption;
 pub const MLX_FOLDER_REFUSAL_MESSAGE: &str =
     "This Mesh pin cannot pick an MLX folder; use a GGUF :QUANT or a single-folder MLX repo.";
 
+pub const HF_SHARE_REFUSAL_MESSAGE: &str =
+    "hf:// is not a Share model ref. Use a catalog id or Hugging Face exact ref like org/repo:Q4_K_M.";
+
+pub const AMBIGUOUS_MLX_DELETE_REFUSAL_MESSAGE: &str =
+    "Cannot delete this MLX cache entry: folder is unknown on this Mesh pin.";
+
 /// Synchronous Share input guards before any Mesh network I/O.
 pub fn reject_share_model_ref_input(input: &str) -> Result<(), String> {
     let trimmed = input.trim();
@@ -28,11 +33,7 @@ pub fn reject_share_model_ref_input(input: &str) -> Result<(), String> {
         return Err("modelId is required for serve mode".to_string());
     }
     if trimmed.starts_with("hf://") {
-        return Err(
-            "Layer package refs (hf://…) are not supported in Share compute. \
-             Use a catalog id or Hugging Face exact ref like org/repo:Q4_K_M."
-                .to_string(),
-        );
+        return Err(HF_SHARE_REFUSAL_MESSAGE.to_string());
     }
     if trimmed.starts_with('/')
         || trimmed.starts_with("./")
@@ -130,7 +131,10 @@ fn repo_only_huggingface_input(input: &str, details: &ModelDetails) -> bool {
             .is_some_and(|value| value == details.exact_ref)
 }
 
-fn refuse_implicit_mlx_folder_pick(input: &str, details: &ModelDetails) -> Result<(), String> {
+pub(crate) fn refuse_implicit_mlx_folder_pick(
+    input: &str,
+    details: &ModelDetails,
+) -> Result<(), String> {
     if repo_only_huggingface_input(input, details) && resolved_under_bit_folder(&details.download_url)
     {
         return Err(MLX_FOLDER_REFUSAL_MESSAGE.to_string());
@@ -185,11 +189,13 @@ fn snapshot_relative_path(path: &Path) -> Option<String> {
 }
 
 fn huggingface_repo_id(path: &Path) -> Option<String> {
-    let mut components = path.components();
-    let repo_folder = components.next()?.as_os_str().to_str()?;
-    repo_folder
-        .strip_prefix("models--")
-        .map(|value| value.replace("--", "/"))
+    for component in path.components() {
+        let folder = component.as_os_str().to_str()?;
+        if let Some(stripped) = folder.strip_prefix("models--") {
+            return Some(stripped.replace("--", "/"));
+        }
+    }
+    None
 }
 
 fn bit_folder_in_relative_path(relative: &str) -> Option<String> {
@@ -223,6 +229,38 @@ fn multi_bit_folder_repos(installed: &[InstalledModel]) -> BTreeSet<String> {
         .collect()
 }
 
+fn installed_model_is_folder_unknown(
+    model: &InstalledModel,
+    ambiguous_repos: &BTreeSet<String>,
+) -> bool {
+    huggingface_repo_id(&model.path).is_some_and(|repo_id| ambiguous_repos.contains(&repo_id))
+}
+
+fn refuse_installed_model_delete_for_scan(
+    model_ref: &str,
+    installed: &[InstalledModel],
+) -> Result<(), String> {
+    let trimmed = model_ref.trim();
+    if trimmed.is_empty() {
+        return Err("modelRef is required".to_string());
+    }
+    let ambiguous_repos = multi_bit_folder_repos(installed);
+    if installed
+        .iter()
+        .any(|model| model.model_ref == trimmed && installed_model_is_folder_unknown(model, &ambiguous_repos))
+    {
+        return Err(AMBIGUOUS_MLX_DELETE_REFUSAL_MESSAGE.to_string());
+    }
+    Ok(())
+}
+
+/// Backend safety gate for cache eviction — not only a UI affordance.
+pub fn refuse_installed_model_delete(model_ref: &str) -> Result<(), String> {
+    let cache = mesh_llm_node::models::default_huggingface_cache_dir();
+    let installed = mesh_llm_node::models::scan_installed_models(cache);
+    refuse_installed_model_delete_for_scan(model_ref, &installed)
+}
+
 fn installed_display_name(model: &InstalledModel, folder_unknown: bool) -> String {
     if folder_unknown {
         snapshot_relative_path(&model.path)
@@ -242,8 +280,7 @@ pub fn installed_models_from_disk() -> Vec<MeshModelOption> {
     installed
         .into_iter()
         .map(|model| {
-            let folder_unknown = huggingface_repo_id(&model.path)
-                .is_some_and(|repo_id| ambiguous_repos.contains(&repo_id));
+            let folder_unknown = installed_model_is_folder_unknown(&model, &ambiguous_repos);
             MeshModelOption {
                 id: model.model_ref.clone(),
                 name: Some(installed_display_name(&model, folder_unknown)),
@@ -258,12 +295,39 @@ pub fn installed_models_from_disk() -> Vec<MeshModelOption> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mesh_llm_host_runtime::models::ModelCapabilities;
+
+    fn test_details(exact_ref: &str, download_url: &str) -> ModelDetails {
+        ModelDetails {
+            display_name: exact_ref.to_string(),
+            exact_ref: exact_ref.to_string(),
+            source: "huggingface",
+            kind: "mlx",
+            download_url: download_url.to_string(),
+            size_label: None,
+            description: None,
+            draft: None,
+            capabilities: ModelCapabilities::default(),
+        }
+    }
+
+    const HUB_ROOT: &str = "/Users/me/Library/Caches/huggingface/hub";
+
+    fn absolute_hub_shard_path(repo: &str, revision: &str, relative: &str) -> PathBuf {
+        let folder = format!("models--{}", repo.replace('/', "--"));
+        PathBuf::from(HUB_ROOT)
+            .join(folder)
+            .join("snapshots")
+            .join(revision)
+            .join(relative)
+    }
 
     #[test]
-    fn rejects_hf_package_refs() {
+    fn rejects_hf_refs() {
         let err = reject_share_model_ref_input("hf://meshllm/Qwen3-8B-Q4_K_M-layers@abc123")
             .expect_err("hf:// must be rejected");
-        assert!(err.contains("hf://"));
+        assert_eq!(err, HF_SHARE_REFUSAL_MESSAGE);
+        assert!(!err.to_ascii_lowercase().contains("layer package"));
     }
 
     #[test]
@@ -275,13 +339,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_shard_and_bit_folder_pointers() {
+    fn rejects_bit_folder_pointers_without_shard() {
+        assert!(reject_share_model_ref_input("org/repo:4bit").is_err());
+        assert!(reject_share_model_ref_input("org/repo:6bit").is_err());
+        assert!(reject_share_model_ref_input("org/repo/4bit").is_err());
         assert!(reject_share_model_ref_input(
             "PocketAiHub/Qwen3.8-27B-Abliterated-MLX/4bit/model-00001-of-00003.safetensors"
         )
         .is_err());
-        assert!(reject_share_model_ref_input("org/repo:4bit").is_err());
-        assert!(reject_share_model_ref_input("org/repo:6bit").is_err());
     }
 
     #[test]
@@ -302,20 +367,57 @@ mod tests {
     }
 
     #[test]
-    fn flags_multi_bit_folder_repos_from_scan_paths() {
+    fn refuse_implicit_mlx_folder_pick_for_repo_only_nested_bit_folder() {
+        let details = test_details(
+            "org/repo",
+            "https://huggingface.co/org/repo/resolve/main/2bit/model-00001-of-00003.safetensors",
+        );
+        assert!(refuse_implicit_mlx_folder_pick("org/repo", &details).is_err());
+        let details_at_rev = test_details(
+            "org/repo@main",
+            "https://huggingface.co/org/repo/resolve/main/2bit/model-00001-of-00003.safetensors",
+        );
+        assert!(refuse_implicit_mlx_folder_pick("org/repo@main", &details_at_rev).is_err());
+    }
+
+    #[test]
+    fn allow_repo_root_mlx_resolve() {
+        let details = test_details(
+            "mlx-community/foo-8bit",
+            "https://huggingface.co/mlx-community/foo-8bit/resolve/main/model.safetensors",
+        );
+        refuse_implicit_mlx_folder_pick("mlx-community/foo-8bit", &details).expect("repo-root mlx");
+    }
+
+    #[test]
+    fn huggingface_repo_id_finds_models_prefix_on_absolute_hub_path() {
+        let path = absolute_hub_shard_path(
+            "org/demo-mlx",
+            "abc123def456",
+            "4bit/model-00001-of-00002.safetensors",
+        );
+        assert_eq!(huggingface_repo_id(&path).as_deref(), Some("org/demo-mlx"));
+    }
+
+    #[test]
+    fn flags_multi_bit_folder_repos_from_absolute_hub_paths() {
         let installed = vec![
             InstalledModel {
                 model_ref: "org/demo-mlx".to_string(),
-                path: PathBuf::from(
-                    "/cache/models--org--demo-mlx/snapshots/abc/4bit/model-00001-of-00002.safetensors",
+                path: absolute_hub_shard_path(
+                    "org/demo-mlx",
+                    "abc123def456",
+                    "4bit/model-00001-of-00002.safetensors",
                 ),
                 size_bytes: None,
                 capabilities: Default::default(),
             },
             InstalledModel {
                 model_ref: "org/demo-mlx".to_string(),
-                path: PathBuf::from(
-                    "/cache/models--org--demo-mlx/snapshots/abc/6bit/model-00001-of-00002.safetensors",
+                path: absolute_hub_shard_path(
+                    "org/demo-mlx",
+                    "abc123def456",
+                    "6bit/model-00001-of-00002.safetensors",
                 ),
                 size_bytes: None,
                 capabilities: Default::default(),
@@ -323,5 +425,35 @@ mod tests {
         ];
         let ambiguous = multi_bit_folder_repos(&installed);
         assert!(ambiguous.contains("org/demo-mlx"));
+        assert!(installed_model_is_folder_unknown(&installed[0], &ambiguous));
+    }
+
+    #[test]
+    fn refuse_installed_model_delete_for_ambiguous_mlx_repo() {
+        let installed = vec![
+            InstalledModel {
+                model_ref: "org/demo-mlx".to_string(),
+                path: absolute_hub_shard_path(
+                    "org/demo-mlx",
+                    "abc123def456",
+                    "4bit/model-00001-of-00002.safetensors",
+                ),
+                size_bytes: None,
+                capabilities: Default::default(),
+            },
+            InstalledModel {
+                model_ref: "org/demo-mlx".to_string(),
+                path: absolute_hub_shard_path(
+                    "org/demo-mlx",
+                    "abc123def456",
+                    "6bit/model-00001-of-00002.safetensors",
+                ),
+                size_bytes: None,
+                capabilities: Default::default(),
+            },
+        ];
+        let err = refuse_installed_model_delete_for_scan("org/demo-mlx", &installed)
+            .expect_err("ambiguous mlx delete must be refused");
+        assert_eq!(err, AMBIGUOUS_MLX_DELETE_REFUSAL_MESSAGE);
     }
 }

@@ -2,8 +2,8 @@
  * Classification of a free-text model ref entered into the Share compute card.
  * Validation mirrors Mesh v0.75.1 `parse_exact_model_ref` / `show_exact_model`:
  * catalog ids, Hugging Face exact refs (org/repo:QUANT, org/repo@rev, MLX repo
- * shorthand). Layer-package `hf://` refs, local paths, shard pointers, and MLX
- * bit-folder selectors are rejected.
+ * shorthand). `hf://` refs, local paths, shard pointers, and MLX bit-folder
+ * selectors are rejected.
  */
 export type ModelRefKind =
   | { kind: "exact"; ref: string }
@@ -60,7 +60,7 @@ export function classifyModelRef(raw: string): ModelRefKind {
     return {
       kind: "invalid",
       reason:
-        "Layer package refs (hf://…) are not supported here. Use a catalog id or Hugging Face exact ref like org/repo:Q4_K_M.",
+        "hf:// is not a Share model ref. Use a catalog id or Hugging Face exact ref like org/repo:Q4_K_M.",
     };
   }
   if (looksLikeLocalPath(trimmed)) {
