@@ -11115,6 +11115,8 @@ export function maybeInstallE2eTauriMocks() {
       }
       case "mesh_installed_models":
         return mockMeshState.models;
+      case "mesh_delete_installed_model":
+        return { deletedPaths: [], reclaimedBytes: 0 };
       case "mesh_model_catalog":
         return {
           gpuName: "Mock Apple GPU",

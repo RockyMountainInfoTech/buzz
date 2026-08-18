@@ -108,6 +108,7 @@ fn sdk_ready_models_are_parsed_from_real_status_shape() {
         vec![super::MeshModelOption {
             id: "Qwen/Qwen3-0.6B-GGUF:Q8_0".to_string(),
             name: None,
+            ..Default::default()
         }]
     );
     assert_eq!(
@@ -130,10 +131,12 @@ fn dedupe_models_collapses_at_main_and_plain_forms() {
         super::MeshModelOption {
             id: "unsloth/gemma-4-E4B-it-GGUF@main:Q4_K_M".to_string(),
             name: None,
+            ..Default::default()
         },
         super::MeshModelOption {
             id: "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M".to_string(),
             name: Some("Gemma 4".to_string()),
+            ..Default::default()
         },
     ];
 
@@ -143,6 +146,7 @@ fn dedupe_models_collapses_at_main_and_plain_forms() {
         vec![super::MeshModelOption {
             id: "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M".to_string(),
             name: Some("Gemma 4".to_string()),
+            ..Default::default()
         }],
         "@main and plain forms of the same model must collapse to one entry"
     );

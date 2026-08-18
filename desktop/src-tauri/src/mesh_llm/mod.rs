@@ -17,6 +17,12 @@ mod catalog;
 pub(crate) use catalog::canonical_curated_model_id;
 pub use catalog::{model_catalog, MeshModelCatalog};
 
+mod model_ref;
+pub(crate) use model_ref::{
+    installed_models_from_disk, refuse_installed_model_delete, reject_share_model_ref_input,
+    resolve_share_model_ref,
+};
+
 mod identity;
 pub use identity::ensure_owner_identity;
 
@@ -75,11 +81,20 @@ const MESH_STOP_TIMEOUT: Duration = Duration::from_secs(12);
 /// (`resolve_auto_routed_model`), so agents don't have to name a model and
 /// can't pick one that doesn't fit their prompt.
 pub const AUTO_MODEL_ID: &str = "auto";
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MeshModelOption {
     pub id: String,
     pub name: Option<String>,
+    /// On-disk artifact path from `scan_installed_models`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Cache eviction is available for this artifact.
+    #[serde(default)]
+    pub deletable: bool,
+    /// Bare multi-folder MLX repo — listed as on disk, folder unknown.
+    #[serde(default)]
+    pub folder_unknown: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -917,6 +932,7 @@ fn push_model(out: &mut Vec<MeshModelOption>, id: &str, name: Option<String>) {
     out.push(MeshModelOption {
         id: id.to_string(),
         name,
+        ..Default::default()
     });
 }
 
@@ -947,7 +963,11 @@ pub(super) fn dedupe_models(models: Vec<MeshModelOption>) -> Vec<MeshModelOption
     }
     by_id
         .into_iter()
-        .map(|(id, name)| MeshModelOption { id, name })
+        .map(|(id, name)| MeshModelOption {
+            id,
+            name,
+            ..Default::default()
+        })
         .collect()
 }
 

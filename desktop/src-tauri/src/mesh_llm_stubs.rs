@@ -39,6 +39,11 @@ pub async fn mesh_installed_models(
 }
 
 #[tauri::command]
+pub async fn mesh_delete_installed_model(_model_ref: String) -> CmdResult<serde_json::Value> {
+    Err("mesh-llm feature not enabled".to_string())
+}
+
+#[tauri::command]
 pub async fn mesh_model_catalog() -> CmdResult<serde_json::Value> {
     Err("mesh-llm feature not enabled".to_string())
 }

@@ -7,6 +7,12 @@ export type MeshHealth =
 export type MeshModelOption = {
   id: string;
   name: string | null;
+  /** On-disk artifact path from `scan_installed_models`. */
+  path?: string | null;
+  /** Cache eviction is available for this artifact. */
+  deletable?: boolean;
+  /** Bare multi-folder MLX repo — folder unknown. */
+  folderUnknown?: boolean;
 };
 
 export type MeshNodeState =
@@ -75,6 +81,20 @@ export async function meshServingUsage(): Promise<MeshServingUsage> {
 
 export async function meshInstalledModels(): Promise<MeshModelOption[]> {
   return await invokeTauri<MeshModelOption[]>("mesh_installed_models");
+}
+
+export type MeshDeleteInstalledModelResult = {
+  deletedPaths: string[];
+  reclaimedBytes: number;
+};
+
+export async function meshDeleteInstalledModel(
+  modelRef: string,
+): Promise<MeshDeleteInstalledModelResult> {
+  return await invokeTauri<MeshDeleteInstalledModelResult>(
+    "mesh_delete_installed_model",
+    { modelRef },
+  );
 }
 
 export type MeshModelFit = "comfortable" | "tight" | "tradeoff" | "too_large";

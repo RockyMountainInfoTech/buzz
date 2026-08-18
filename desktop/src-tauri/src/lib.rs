@@ -786,6 +786,7 @@ pub fn run() {
             mesh_node_status,
             mesh_serving_usage,
             mesh_installed_models,
+            mesh_delete_installed_model,
             mesh_model_catalog,
             update_managed_agent,
             discover_backend_providers,

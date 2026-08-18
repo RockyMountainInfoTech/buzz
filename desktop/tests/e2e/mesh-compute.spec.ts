@@ -16,7 +16,7 @@ type E2eWindow = Window & {
 };
 
 test("Share compute chooses a model before sharing", async ({ page }) => {
-  const modelRef = "hf://demo/SmolLM2-135M-Instruct-GGUF:Q4_K_M";
+  const modelRef = "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M";
   await installMockBridge(page);
   await page.goto("/");
   await openSettings(page, "compute");
@@ -88,23 +88,35 @@ test("Share compute chooses a model before sharing", async ({ page }) => {
     .toContain("mesh_stop_node");
 });
 
+test("Share compute rejects hf:// refs in the custom model field", async ({
+  page,
+}) => {
+  await installMockBridge(page);
+  await page.goto("/");
+  await openSettings(page, "compute");
+
+  const toggle = page.getByTestId("mesh-share-compute-toggle");
+  const model = page.getByTestId("mesh-share-compute-model");
+
+  await model.click();
+  await page.getByRole("option", { name: "Custom model…" }).click();
+  await page.getByLabel("Custom model reference").fill(
+    "hf://meshllm/Qwen3-8B-Q4_K_M-layers@abc123",
+  );
+
+  await expect(toggle).toBeDisabled();
+  await expect(page.getByText(/hf:\/\//)).toBeVisible();
+});
+
 test("a consuming client can switch to sharing its saved local model", async ({
   page,
 }) => {
-  // Regression: consuming someone else's shared compute starts a client-mode
-  // node in the single runtime slot, which reports state:"running". The Share
-  // toggle keyed off state alone and lit up. A later guard overcorrected by
-  // disabling the switch and copying the remote model over the local sharing
-  // choice. Keep the switch off, preserve the local model, then replace the
-  // client with one serve start (never a stop command).
-  const localModel = "hf://demo/local-small-model:Q4_K_M";
+  const localModel = "unsloth/gemma-4-E4B-it-GGUF:Q4_K_M";
   await page.addInitScript((model) => {
     window.localStorage.setItem("buzz.mesh-compute.share.model.v1", model);
   }, localModel);
   await installMockBridge(page);
   await page.goto("/");
-  // The mesh seed hook is installed when the mock bridge boots; calling it
-  // before then silently no-ops (optional chaining) and the seed is lost.
   await page.waitForFunction(
     () => typeof (window as E2eWindow).__BUZZ_E2E_SET_MESH__ === "function",
   );
@@ -131,7 +143,7 @@ test("a consuming client can switch to sharing its saved local model", async ({
   await expect(customModel).toHaveValue(localModel);
   await customModel.fill("");
   await expect(customModel).toBeVisible();
-  await customModel.fill("hf://demo/replacement-model:Q4_K_M");
+  await customModel.fill("unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_M");
   await toggle.click();
   await expect(toggle).toBeChecked();
 
@@ -143,7 +155,10 @@ test("a consuming client can switch to sharing its saved local model", async ({
   expect(commands.payloads).toContainEqual({
     command: "mesh_start_node",
     payload: {
-      request: { mode: "serve", modelId: "hf://demo/replacement-model:Q4_K_M" },
+      request: {
+        mode: "serve",
+        modelId: "unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_M",
+      },
     },
   });
 });

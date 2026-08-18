@@ -345,6 +345,9 @@ pub(crate) async fn restore_mesh_sharing(app: &AppHandle, state: &AppState) -> C
         return Ok(());
     }
     config.model_id = mesh_llm::canonical_curated_model_id(&config.model_id).to_string();
+    config.model_id = mesh_llm::resolve_share_model_ref(&config.model_id)
+        .await
+        .map_err(|error| format!("failed to restore Share Compute: {error}"))?;
     if state.mesh_llm_runtime.lock().await.is_some() {
         return Ok(());
     }
@@ -412,6 +415,15 @@ pub async fn mesh_start_node(
     request.relay_url = Some(relay_url.clone());
     if let Some(model_id) = request.model_id.as_mut() {
         *model_id = mesh_llm::canonical_curated_model_id(model_id).to_string();
+    }
+    if request.mode == mesh_llm::MeshNodeMode::Serve {
+        let model_id = request
+            .model_id
+            .as_deref()
+            .ok_or_else(|| "modelId is required for serve mode".to_string())?;
+        mesh_llm::reject_share_model_ref_input(model_id)?;
+        let resolved = mesh_llm::resolve_share_model_ref(model_id).await?;
+        request.model_id = Some(resolved);
     }
     let sharing_config = if request.mode == mesh_llm::MeshNodeMode::Serve {
         Some(sharing_config_from_request(&request)?)
@@ -830,16 +842,48 @@ pub async fn mesh_serving_usage(
 
 #[tauri::command]
 pub async fn mesh_installed_models(
-    state: State<'_, AppState>,
+    _state: State<'_, AppState>,
 ) -> CmdResult<Vec<mesh_llm::MeshModelOption>> {
-    let runtime = state.mesh_llm_runtime.lock().await;
-    if let Some(runtime) = runtime.as_ref() {
-        return runtime
-            .installed_models()
-            .await
-            .map_err(|error| error.to_string());
+    Ok(tokio::task::spawn_blocking(mesh_llm::installed_models_from_disk)
+        .await
+        .map_err(|error| format!("mesh installed-models scan failed: {error}"))?)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshDeleteInstalledModelResult {
+    pub deleted_paths: Vec<String>,
+    pub reclaimed_bytes: u64,
+}
+
+/// Evict a cached model from disk. Does not unload from a running `:9337` ingress
+/// and does not touch `/v1/models` — cache eviction only.
+#[tauri::command]
+pub async fn mesh_delete_installed_model(model_ref: String) -> CmdResult<MeshDeleteInstalledModelResult> {
+    let model_ref = model_ref.trim().to_string();
+    if model_ref.is_empty() {
+        return Err("modelRef is required".to_string());
     }
-    Ok(Vec::new())
+    let guard_ref = model_ref.clone();
+    tokio::task::spawn_blocking(move || mesh_llm::refuse_installed_model_delete(&guard_ref))
+        .await
+        .map_err(|error| format!("mesh delete guard task failed: {error}"))??;
+    let cache = mesh_llm_node::models::default_huggingface_cache_dir();
+    let result = mesh_llm_node::models::delete_model(
+        &model_ref,
+        cache,
+        mesh_llm_node::models::DeleteModelOptions::default(),
+    )
+    .await
+    .map_err(|error| format!("{error:#}"))?;
+    Ok(MeshDeleteInstalledModelResult {
+        deleted_paths: result
+            .deleted_paths
+            .into_iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+        reclaimed_bytes: result.reclaimed_bytes,
+    })
 }
 
 /// Hardware-aware curated model catalog for the Share-compute picker: the

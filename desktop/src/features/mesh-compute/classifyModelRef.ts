@@ -1,24 +1,55 @@
 /**
- * Classification of a free-text model ref entered into the serve card.
- * Mirrors mesh's own resolution categories for input validation.
+ * Classification of a free-text model ref entered into the Share compute card.
+ * Validation mirrors Mesh v0.75.1 `parse_exact_model_ref` / `show_exact_model`:
+ * catalog ids, Hugging Face exact refs (org/repo:QUANT, org/repo@rev, MLX repo
+ * shorthand). `hf://` refs, local paths, shard pointers, and MLX bit-folder
+ * selectors are rejected.
  */
 export type ModelRefKind =
-  | { kind: "catalog"; name: string }
-  | { kind: "huggingface"; ref: string }
-  | { kind: "local-path"; path: string }
+  | { kind: "exact"; ref: string }
+  | { kind: "invalid"; reason: string }
   | { kind: "unknown" };
 
+const MLX_FOLDER_REFUSAL_MESSAGE =
+  "This Mesh pin cannot pick an MLX folder; use a GGUF :QUANT or a single-folder MLX repo.";
+
+const SHARD_SEGMENT =
+  /(?:^|\/)[^/]*-\d+-of-\d+\.(?:safetensors|gguf)(?:$|\/)/i;
+
+function isBitFolderSegment(segment: string): boolean {
+  const value = segment.trim().toLowerCase();
+  const match = /^(\d+)bit$/.exec(value);
+  return match != null && match[1] != null && match[1].length > 0;
+}
+
+function containsBitFolderPointer(value: string): boolean {
+  if (value.split("/").some(isBitFolderSegment)) {
+    return true;
+  }
+  const selector = value.includes(":") ? value.slice(value.lastIndexOf(":") + 1) : "";
+  const selectorRoot = selector.split("@")[0] ?? selector;
+  return isBitFolderSegment(selectorRoot);
+}
+
+function looksLikeShardPath(value: string): boolean {
+  if (value.toLowerCase().includes("mmproj")) {
+    return true;
+  }
+  return SHARD_SEGMENT.test(value);
+}
+
+function looksLikeLocalPath(value: string): boolean {
+  return (
+    value.startsWith("/") ||
+    value.startsWith("./") ||
+    value.startsWith("../") ||
+    value.startsWith("~") ||
+    value.toLowerCase().endsWith(".gguf")
+  );
+}
+
 /**
- * Classify a model-ref string the way mesh-llm's runtime does:
- *  - `hf://…` → HuggingFace ref
- *  - starts with `/` or `./` or `~`, OR ends with `.gguf` → local file
- *  - otherwise non-empty → catalog name
- *  - empty/whitespace → unknown
- *
- * Source: mesh runtime/mod.rs:3390 ("local file, catalog name, or HuggingFace URL").
- *
- * This is validation-only — canonical resolution happens server-side via
- * `mesh_start_node`.
+ * Classify Share-compute custom input before Mesh canonicalizes it server-side.
  */
 export function classifyModelRef(raw: string): ModelRefKind {
   const trimmed = raw.trim();
@@ -26,18 +57,24 @@ export function classifyModelRef(raw: string): ModelRefKind {
     return { kind: "unknown" };
   }
   if (trimmed.startsWith("hf://")) {
-    return { kind: "huggingface", ref: trimmed };
+    return {
+      kind: "invalid",
+      reason:
+        "hf:// is not a Share model ref. Use a catalog id or Hugging Face exact ref like org/repo:Q4_K_M.",
+    };
   }
-  // Local path heuristics. Conservative: only mark as path when there are
-  // unambiguous signals (leading separator, home shortcut, .gguf extension).
-  const looksLikePath =
-    trimmed.startsWith("/") ||
-    trimmed.startsWith("./") ||
-    trimmed.startsWith("../") ||
-    trimmed.startsWith("~") ||
-    trimmed.toLowerCase().endsWith(".gguf");
-  if (looksLikePath) {
-    return { kind: "local-path", path: trimmed };
+  if (looksLikeLocalPath(trimmed)) {
+    return {
+      kind: "invalid",
+      reason:
+        "Local file paths are not supported here. Use a catalog id or Hugging Face exact ref.",
+    };
   }
-  return { kind: "catalog", name: trimmed };
+  if (looksLikeShardPath(trimmed) || containsBitFolderPointer(trimmed)) {
+    return {
+      kind: "invalid",
+      reason: MLX_FOLDER_REFUSAL_MESSAGE,
+    };
+  }
+  return { kind: "exact", ref: trimmed };
 }
