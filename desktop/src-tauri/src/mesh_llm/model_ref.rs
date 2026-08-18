@@ -151,7 +151,7 @@ fn base_huggingface_repo(input: &str) -> Option<String> {
 }
 
 fn input_specifies_hf_file_path(input: &str) -> bool {
-    let trimmed = input.trim();
+    let trimmed = input.trim().trim_end_matches('/');
     if huggingface_resolve_parts(trimmed).is_some() {
         return true;
     }
@@ -159,7 +159,11 @@ fn input_specifies_hf_file_path(input: &str) -> bool {
         return false;
     }
     let without_selector = trimmed.split_once(':').map(|(left, _)| left).unwrap_or(trimmed);
-    without_selector.split('/').count() >= 3
+    without_selector
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .count()
+        >= 3
 }
 
 fn has_explicit_gguf_quant_selector(input: &str) -> bool {
