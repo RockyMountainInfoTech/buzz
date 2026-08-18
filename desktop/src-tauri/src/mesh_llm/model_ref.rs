@@ -563,6 +563,19 @@ mod tests {
     }
 
     #[test]
+    fn trailing_slash_repo_alias_is_implicit_repo_level_input() {
+        let details = test_details(
+            "org/repo@main",
+            "https://huggingface.co/org/repo/resolve/main/2bit/model-00001-of-00003.safetensors",
+        );
+        assert!(
+            implicit_repo_level_input("org/repo/", &details),
+            "trailing slash must not look like a file path"
+        );
+        assert!(!input_specifies_hf_file_path("org/repo/"));
+    }
+
+    #[test]
     fn refuse_implicit_mlx_folder_pick_for_hf_aliases() {
         let details = test_details(
             "org/repo@main",
