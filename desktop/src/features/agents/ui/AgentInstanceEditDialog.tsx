@@ -1,3 +1,4 @@
+import { assignedMachineUpdate } from "@/features/agents/lib/agentHosting";
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
@@ -141,6 +142,9 @@ export function AgentInstanceEditDialog({
   const [parallelism, setParallelism] = React.useState(
     String(agent.parallelism),
   );
+  const [assignedMachine, setAssignedMachine] = React.useState(
+    agent.assignedMachine ?? "",
+  );
   const [systemPrompt, setSystemPrompt] = React.useState(
     agent.systemPrompt ?? "",
   );
@@ -201,6 +205,7 @@ export function AgentInstanceEditDialog({
       );
       setAgentArgs(agent.agentArgs.join(","));
       setParallelism(String(agent.parallelism));
+      setAssignedMachine(agent.assignedMachine ?? "");
       setSystemPrompt(agent.systemPrompt ?? "");
       setModel(agent.model ?? "");
       setIsCustomModelEditing(false);
@@ -702,6 +707,10 @@ export function AgentInstanceEditDialog({
           parsedParallelism > 0 && parsedParallelism !== agent.parallelism
             ? parsedParallelism
             : undefined,
+        assignedMachine: assignedMachineUpdate(
+          assignedMachine,
+          agent.assignedMachine,
+        ),
         // Linked instances defer model/provider/systemPrompt to the definition.
         systemPrompt:
           linkedPersona != null
@@ -1193,6 +1202,7 @@ export function AgentInstanceEditDialog({
                       model={inheritedSubmission.model ?? ""}
                       modelTuningRuntimeId={prospectiveRuntimeId}
                       parallelism={parallelism}
+                      assignedMachine={assignedMachine}
                       provider={effectiveProvider}
                       requiredEnvKeys={advancedRequiredEnvKeys}
                       catalogStatus={runtimeCatalogStatus}
@@ -1204,6 +1214,7 @@ export function AgentInstanceEditDialog({
                       onEnvVarsChange={setEnvVars}
                       onInheritHarnessChange={setInheritHarness}
                       onParallelismChange={setParallelism}
+                      onAssignedMachineChange={setAssignedMachine}
                       onSystemPromptChange={setSystemPrompt}
                     />
                   </motion.div>

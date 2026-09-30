@@ -21,6 +21,7 @@ mod runtime;
 use runtime::{AgentRuntime, PoolStartup, SessionMode};
 mod scope;
 mod setup_mode;
+mod turn_claim;
 mod usage;
 
 pub use usage::TurnUsage;
@@ -2668,6 +2669,14 @@ async fn run_harness(
 
     let presence_publisher = relay.event_publisher();
     let presence_keys = config.keys.clone();
+    // Turn claims: one body per agent key runs each turn. See `turn_claim`.
+    let claim_publisher =
+        turn_claim::ClaimPublisher::new(relay.event_publisher(), config.keys.clone());
+    let mut claim_gate = turn_claim::ClaimGate::new(
+        config.body_id.clone(),
+        config.runner_mode,
+        config.claim_window_ms,
+    );
 
     // Priority: BUZZ_AUTH_TAG (NIP-OA attestation) → --agent-owner flag.
     let startup_owner: Option<String> = resolve_agent_owner(config);
@@ -2731,6 +2740,31 @@ async fn run_harness(
                  observer frames will not be published"
             );
         }
+    }
+
+    let mut turn_claim_rx: Option<tokio::sync::mpsc::Receiver<nostr::Event>> = None;
+    if claim_gate.claims_enabled() {
+        relay
+            .subscribe_turn_claims()
+            .await
+            .map_err(|e| anyhow::anyhow!("turn claim subscribe error: {e}"))?;
+        turn_claim_rx = relay.take_turn_claim_rx();
+        tracing::info!(
+            body = %config.body_id,
+            runner_mode = %config.runner_mode,
+            claim_window_ms = config.claim_window_ms,
+            "turn claims enabled — sibling bodies of this key coordinate per turn"
+        );
+    } else {
+        tracing::info!(
+            body = %config.body_id,
+            runner_mode = %config.runner_mode,
+            "turn claims disabled — {}",
+            match config.runner_mode {
+                turn_claim::RunnerMode::Active => "this body runs every turn",
+                turn_claim::RunnerMode::Standby => "this body never runs a turn (hard standby)",
+            }
+        );
     }
 
     let channel_info_map = relay
@@ -2997,6 +3031,10 @@ async fn run_harness(
         SteerAck(SteerAckEvent),
         Wake(u32, Result<AgentPool, String>),
         HoldDeadline,
+        /// A parked turn claim's window closed.
+        ClaimDeadline,
+        /// A sibling body published a turn claim.
+        TurnClaim(Box<nostr::Event>),
     }
 
     loop {
@@ -3076,6 +3114,8 @@ async fn run_harness(
                     &ctx,
                     &mut last_activity,
                     observer.as_ref(),
+                    &mut claim_gate,
+                    Some(&claim_publisher),
                 ) {
                     typing_channels.insert(scope, thread_tags);
                 }
@@ -3132,6 +3172,8 @@ async fn run_harness(
                 &ctx,
                 &mut last_activity,
                 observer.as_ref(),
+                &mut claim_gate,
+                Some(&claim_publisher),
             ) {
                 typing_channels.insert(scope, thread_tags);
             }
@@ -3140,6 +3182,7 @@ async fn run_harness(
         // Borrow result_rx and join_set simultaneously via split-borrow helper.
         pool.retain_held_scopes(|scope| queue.has_pending_scope(scope));
         let hold_deadline = pool.next_hold_deadline(pool::HOLD_BUSY_OWNER_TIMEOUT);
+        let claim_deadline = claim_gate.next_deadline();
         let pool_event: Option<PoolEvent> = {
             let (result_rx, join_set) = pool.rx_and_join_set();
             tokio::select! {
@@ -3185,6 +3228,15 @@ async fn run_harness(
                 _ = pool::AgentPool::wait_for_hold_deadline(hold_deadline), if pool_ready => {
                     Some(PoolEvent::HoldDeadline)
                 },
+                _ = turn_claim::ClaimGate::wait_for_deadline(claim_deadline) => {
+                    Some(PoolEvent::ClaimDeadline)
+                },
+                Some(claim_event) = async {
+                    match turn_claim_rx.as_mut() {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => Some(PoolEvent::TurnClaim(Box::new(claim_event))),
                 Some(Err(error)) = wake_tasks.join_next(), if !wake_tasks.is_empty() => {
                     if let Some(attempt) = pool_lifecycle.waking_attempt() {
                         let message = format!("pool wake task failed: {error}");
@@ -3575,7 +3627,7 @@ async fn run_harness(
                             );
                             if pool_ready {
                                 for (scope, thread_tags) in
-                                    dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity, observer.as_ref())
+                                    dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity, observer.as_ref(), &mut claim_gate, Some(&claim_publisher))
                                 {
                                     typing_channels.insert(scope, thread_tags);
                                 }
@@ -3675,7 +3727,7 @@ async fn run_harness(
                     } else if queue.has_flushable_work() {
                         tracing::debug!("heartbeat_skipped_events");
                         for (scope, thread_tags) in
-                            dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity, observer.as_ref())
+                            dispatch_pending(&mut pool, &mut queue, &ctx, &mut last_activity, observer.as_ref(), &mut claim_gate, Some(&claim_publisher))
                         {
                             typing_channels.insert(scope, thread_tags);
                         }
@@ -3782,6 +3834,8 @@ async fn run_harness(
                     &ctx,
                     &mut last_activity,
                     observer.as_ref(),
+                    &mut claim_gate,
+                    Some(&claim_publisher),
                 ) {
                     typing_channels.insert(scope, thread_tags);
                 }
@@ -3811,6 +3865,8 @@ async fn run_harness(
                     &ctx,
                     &mut last_activity,
                     observer.as_ref(),
+                    &mut claim_gate,
+                    Some(&claim_publisher),
                 ) {
                     typing_channels.insert(scope, thread_tags);
                 }
@@ -3969,6 +4025,8 @@ async fn run_harness(
                     &ctx,
                     &mut last_activity,
                     observer.as_ref(),
+                    &mut claim_gate,
+                    Some(&claim_publisher),
                 ) {
                     typing_channels.insert(scope, thread_tags);
                 }
@@ -4001,6 +4059,8 @@ async fn run_harness(
                             &ctx,
                             &mut last_activity,
                             observer.as_ref(),
+                            &mut claim_gate,
+                            Some(&claim_publisher),
                         ) {
                             typing_channels.insert(scope, thread_tags);
                         }
@@ -4018,6 +4078,75 @@ async fn run_harness(
                     }
                 }
             }
+            Some(PoolEvent::ClaimDeadline) => {
+                // Parked batches whose claim window closed without a better
+                // sibling claim: put them back (timestamps preserved) so the
+                // next dispatch pass runs them without a fresh claim.
+                let now = tokio::time::Instant::now();
+                let released = claim_gate.release_expired(now);
+                for batch in released {
+                    let scope = batch.scope.clone();
+                    queue.requeue_preserve_timestamps(batch);
+                    queue.mark_complete(scope);
+                }
+                if pool_ready {
+                    for (scope, thread_tags) in dispatch_pending(
+                        &mut pool,
+                        &mut queue,
+                        &ctx,
+                        &mut last_activity,
+                        observer.as_ref(),
+                        &mut claim_gate,
+                        Some(&claim_publisher),
+                    ) {
+                        typing_channels.insert(scope, thread_tags);
+                    }
+                }
+            }
+            Some(PoolEvent::TurnClaim(event)) => {
+                // Only our own key's claims count: the subscription is `#p`
+                // self-addressed, but the author is what proves a sibling body.
+                if event.pubkey.to_hex() != pubkey_hex {
+                    tracing::debug!(author = %event.pubkey.to_hex(), "ignoring turn claim from another key");
+                } else if let Some(claim) = turn_claim::TurnClaim::parse(&event) {
+                    match claim_gate.on_claim(&claim) {
+                        turn_claim::ClaimVerdict::StandDown { batch, winner } => {
+                            let ids = turn_claim::batch_event_ids(&batch);
+                            tracing::info!(
+                                channel = %batch.channel_id,
+                                scope = %batch.scope.telemetry_label(),
+                                winner = %winner,
+                                events = ids.len(),
+                                "turn claim lost — standing down, sibling body answers"
+                            );
+                            queue.mark_complete(batch.scope.clone());
+                            let rc = ctx.rest_client.clone();
+                            tokio::spawn(async move {
+                                for eid in &ids {
+                                    pool::reaction_remove(&rc, eid, "👀").await;
+                                }
+                            });
+                        }
+                        turn_claim::ClaimVerdict::CancelInFlight { scope, winner } => {
+                            let fired = signal_in_flight_task_for_scope(
+                                &mut pool,
+                                &scope,
+                                ControlSignal::Cancel,
+                            );
+                            tracing::info!(
+                                channel = %scope.channel_id(),
+                                scope = %scope.telemetry_label(),
+                                winner = %winner,
+                                fired,
+                                "late better turn claim — cancelling in-flight turn"
+                            );
+                        }
+                        turn_claim::ClaimVerdict::Ignore => {}
+                    }
+                } else {
+                    tracing::debug!(event_id = %event.id.to_hex(), "malformed turn claim — ignoring");
+                }
+            }
             Some(PoolEvent::HoldDeadline) => {
                 // A held thread must make progress even when every unrelated
                 // relay/timer source is quiet. The deadline is derived from
@@ -4029,6 +4158,8 @@ async fn run_harness(
                     &ctx,
                     &mut last_activity,
                     observer.as_ref(),
+                    &mut claim_gate,
+                    Some(&claim_publisher),
                 ) {
                     typing_channels.insert(scope, thread_tags);
                 }
@@ -4406,6 +4537,8 @@ fn dispatch_pending(
     ctx: &Arc<PromptContext>,
     last_activity: &mut tokio::time::Instant,
     observer: Option<&observer::ObserverHandle>,
+    claims: &mut turn_claim::ClaimGate,
+    claim_publisher: Option<&turn_claim::ClaimPublisher>,
 ) -> Vec<(scope::SessionScope, ThreadTags)> {
     // Keyed by the exact session scope, not the channel: two threads dispatching
     // concurrently in one channel get distinct typing entries so completing one
@@ -4425,6 +4558,37 @@ fn dispatch_pending(
         let batch = match queue.flush_next() {
             Some(b) => b,
             None => break,
+        };
+        // Turn-claim gate: with claims enabled a batch is parked for one
+        // window while sibling bodies of this key compare claims; with claims
+        // disabled an active body dispatches at once and a standby body drops.
+        let (claim_body, claim_rank) = (claims.body_id().to_string(), claims.rank());
+        let batch = match claims.admit(batch, now, |ids| {
+            if let Some(publisher) = claim_publisher {
+                publisher.publish(ids, &claim_body, claim_rank);
+            }
+        }) {
+            (turn_claim::GateDecision::Dispatch, Some(batch)) => batch,
+            (turn_claim::GateDecision::Parked, _) => continue,
+            (turn_claim::GateDecision::Drop, Some(batch)) => {
+                let ids = turn_claim::batch_event_ids(&batch);
+                tracing::info!(
+                    channel = %batch.channel_id,
+                    scope = %batch.scope.telemetry_label(),
+                    body = %claim_body,
+                    events = ids.len(),
+                    "standby body — leaving this turn to the active body"
+                );
+                queue.mark_complete(batch.scope.clone());
+                let rc = ctx.rest_client.clone();
+                tokio::spawn(async move {
+                    for eid in &ids {
+                        pool::reaction_remove(&rc, eid, "👀").await;
+                    }
+                });
+                continue;
+            }
+            (_, None) => continue,
         };
         let channel_id = batch.channel_id;
         let scope = batch.scope.clone();
@@ -9151,6 +9315,9 @@ mod build_mcp_servers_tests {
             session_policy: scope::SessionPolicy::Channel,
             multiple_event_handling: config::MultipleEventHandling::Queue,
             ignore_self: true,
+            body_id: "test-body".to_string(),
+            runner_mode: turn_claim::RunnerMode::Active,
+            claim_window_ms: 0,
             kinds_override: None,
             channels_override: None,
             no_mention_filter: false,
@@ -9415,6 +9582,9 @@ mod error_outcome_emission_tests {
             session_policy: scope::SessionPolicy::Channel,
             multiple_event_handling: config::MultipleEventHandling::Queue,
             ignore_self: true,
+            body_id: "test-body".to_string(),
+            runner_mode: turn_claim::RunnerMode::Active,
+            claim_window_ms: 0,
             kinds_override: None,
             channels_override: None,
             no_mention_filter: false,

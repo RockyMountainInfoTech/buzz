@@ -82,6 +82,7 @@ mod tests {
             idle_timeout_seconds: None,
             max_turn_duration_seconds: None,
             parallelism,
+            assigned_machine: None,
             system_prompt: None,
             model: None,
             provider: None,

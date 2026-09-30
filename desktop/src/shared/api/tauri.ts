@@ -126,6 +126,7 @@ export type RawManagedAgent = {
   idle_timeout_seconds: number | null;
   max_turn_duration_seconds: number | null;
   parallelism: number;
+  assigned_machine?: string | null;
   session_policy?: ManagedAgent["sessionPolicy"];
   system_prompt: string | null;
   avatar_url?: string | null;
@@ -602,6 +603,7 @@ export function fromRawManagedAgent(agent: RawManagedAgent): ManagedAgent {
     idleTimeoutSeconds: agent.idle_timeout_seconds,
     maxTurnDurationSeconds: agent.max_turn_duration_seconds,
     parallelism: agent.parallelism,
+    assignedMachine: agent.assigned_machine ?? null,
     sessionPolicy: agent.session_policy ?? "channel",
     systemPrompt: agent.system_prompt,
     avatarUrl: agent.avatar_url ?? null,
@@ -759,6 +761,7 @@ export async function createManagedAgent(input: CreateManagedAgentInput) {
         idleTimeoutSeconds: input.idleTimeoutSeconds,
         maxTurnDurationSeconds: input.maxTurnDurationSeconds,
         parallelism: input.parallelism,
+        assignedMachine: input.assignedMachine,
         systemPrompt: input.systemPrompt,
         avatarUrl: input.avatarUrl,
         model: input.model,

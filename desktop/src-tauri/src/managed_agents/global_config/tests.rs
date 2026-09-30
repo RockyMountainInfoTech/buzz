@@ -267,6 +267,8 @@ fn roundtrip_serialization() {
         provider: Some("anthropic".to_string()),
         model: Some("claude-opus-4".to_string()),
         preferred_runtime: Some("claude".to_string()),
+        machine_name: None,
+        default_assigned_machine: None,
     };
     let json = serde_json::to_string(&config).expect("serialize");
     let back: GlobalAgentConfig = serde_json::from_str(&json).expect("deserialize");
@@ -317,6 +319,7 @@ fn bare_record() -> ManagedAgentRecord {
         idle_timeout_seconds: None,
         max_turn_duration_seconds: None,
         parallelism: 1,
+        assigned_machine: None,
         system_prompt: None,
         model: None,
         provider: None,
@@ -601,6 +604,8 @@ fn populated_global_config_round_trips() {
         provider: Some("anthropic".to_string()),
         model: Some("claude-opus-4-5".to_string()),
         preferred_runtime: None,
+        machine_name: None,
+        default_assigned_machine: None,
     };
     let json = serde_json::to_string(&original).expect("serialization must not fail");
     let decoded: GlobalAgentConfig =

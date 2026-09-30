@@ -471,6 +471,32 @@ pub async fn handle_auth(event: nostr::Event, conn: Arc<ConnectionState>, state:
                 .conn_manager
                 .set_authenticated_pubkey(conn_id, pubkey.to_bytes().to_vec());
             conn.send(RelayMessage::ok(&event_id_hex, true, ""));
+            // Detect concurrent sessions for the same identity (the same agent
+            // key running on two machines). Advisory only: the harness-side
+            // turn claim (kind 20003) arbitrates who answers; this NOTICE makes
+            // the second body visible in logs and to the client.
+            let other_sessions = state
+                .conn_manager
+                .connection_ids_for_pubkey_in_community(
+                    conn.tenant.community(),
+                    pubkey.to_bytes().as_slice(),
+                )
+                .iter()
+                .filter(|id| **id != conn_id)
+                .count();
+            if other_sessions > 0 {
+                warn!(
+                    conn_id = %conn_id,
+                    pubkey = %pubkey.to_hex(),
+                    other_sessions,
+                    "duplicate authenticated session for identity — another body of this key is connected"
+                );
+                conn.send(RelayMessage::notice(
+                    "Another session is already connected as this identity. \
+                     If this is an agent, running the same key in two places can cause duplicate replies \
+                     unless the harness turn-claim lease is enabled.",
+                ));
+            }
             // _auth_permit drops here — expiry's write guard may proceed.
         }
         Err(e) => {

@@ -190,6 +190,10 @@ pub struct CreateManagedAgentRequest {
     pub spawn_after_create: bool,
     #[serde(default = "default_start_on_app_launch")]
     pub start_on_app_launch: bool,
+    /// Machine this agent should run on. Absent = use the install's default
+    /// assigned machine (or unassigned when none is configured).
+    #[serde(default)]
+    pub assigned_machine: Option<String>,
     #[serde(default)]
     pub backend: BackendKind,
     /// `None` = caller expressed no preference: the definition's
@@ -229,6 +233,9 @@ pub struct UpdateManagedAgentRequest {
     pub env_vars: Option<BTreeMap<String, String>>,
     #[serde(default)]
     pub parallelism: Option<u32>,
+    /// Absent = don't touch. Present = set (empty/whitespace clears the assignment).
+    #[serde(default)]
+    pub assigned_machine: Option<String>,
     /// Accepted for wire compatibility; not applied to the stored record.
     /// `BUZZ_ACP_TURN_TIMEOUT` is deprecated and ignored by the harness.
     ///

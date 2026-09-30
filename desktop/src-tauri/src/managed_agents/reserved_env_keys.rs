@@ -67,6 +67,8 @@ pub(crate) const RESERVED_ENV_KEYS: &[&str] = &[
     // threads receive independent ACP sessions.
     "BUZZ_ACP_SESSION_POLICY",
     "BUZZ_ACP_NO_PRESENCE",
+    "BUZZ_ACP_BODY_ID",
+    "BUZZ_ACP_RUNNER_MODE",
     // Readiness handoff: desktop is the ONLY readiness source. A saved or
     // ambient env var must not be able to forge setup mode (NotReady) on a
     // Ready agent or suppress it (empty/stale payload) on a NotReady one.

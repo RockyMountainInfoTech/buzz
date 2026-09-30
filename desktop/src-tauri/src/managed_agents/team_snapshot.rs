@@ -273,6 +273,7 @@ mod tests {
             idle_timeout_seconds: Some(30),
             max_turn_duration_seconds: Some(600),
             parallelism: 1,
+            assigned_machine: None,
             system_prompt: Some(format!("You are {name}.")),
             model: Some("claude-opus-4".to_string()),
             provider: Some("anthropic".to_string()),

@@ -344,6 +344,7 @@ pub fn build_managed_agent_summary(
         idle_timeout_seconds: record.idle_timeout_seconds,
         max_turn_duration_seconds: record.max_turn_duration_seconds,
         parallelism: record.parallelism,
+        assigned_machine: record.assigned_machine.clone(),
         session_policy: super::effective_acp_session_policy(record, personas),
         system_prompt: effective_prompt,
         avatar_url: record.avatar_url.clone(),
@@ -779,6 +780,10 @@ pub fn spawn_agent_child(
     for (key, value) in &descriptor.env {
         command.env(key, value);
     }
+    // Multi-machine hosting: body id + active/standby role, derived from the
+    // shared assignment and this install's machine name. Applied after user
+    // env (both keys are reserved) so nothing can shadow the role.
+    super::runner_body::apply_runner_body_env(&mut command, record, &global);
     // Resolve once and stamp the same value onto the environment and snapshot.
     let acp_session_policy = super::effective_acp_session_policy(record, &personas);
     super::apply_acp_session_policy_env(&mut command, acp_session_policy);

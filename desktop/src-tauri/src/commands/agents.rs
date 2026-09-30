@@ -365,6 +365,18 @@ pub async fn create_managed_agent(
     // pairing (and the definition-default fallback) is resolved later at the
     // mint site via `resolve_mint_behavioral_defaults`, where the linked
     // definition is in hand.
+    let assigned_machine = crate::managed_agents::runner_body::normalize_machine_name(
+        input.assigned_machine.as_deref(),
+    )
+    .or_else(|| {
+        crate::managed_agents::load_global_agent_config(&app)
+            .unwrap_or_default()
+            .default_assigned_machine
+    });
+    if let Some(name) = assigned_machine.as_deref() {
+        crate::managed_agents::runner_body::validate_machine_name(name)?;
+    }
+
     let respond_to_allowlist =
         crate::managed_agents::validate_respond_to_allowlist(&input.respond_to_allowlist)?;
     if input.respond_to == Some(crate::managed_agents::RespondTo::Allowlist)
@@ -628,6 +640,7 @@ pub async fn create_managed_agent(
             idle_timeout_seconds: input.idle_timeout_seconds.filter(|s| *s > 0),
             max_turn_duration_seconds: input.max_turn_duration_seconds.filter(|s| *s > 0),
             parallelism: minted.parallelism.unwrap_or(DEFAULT_AGENT_PARALLELISM),
+            assigned_machine: assigned_machine.clone(),
             session_policy: linked_persona
                 .as_ref()
                 .map(|persona| persona.session_policy)

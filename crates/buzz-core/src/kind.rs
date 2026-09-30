@@ -467,6 +467,12 @@ pub const KIND_PRESENCE_UPDATE: u32 = 20001;
 pub const KIND_PAIRING: u32 = 24134;
 /// Ephemeral: typing indicator for a channel.
 pub const KIND_TYPING_INDICATOR: u32 = 20002;
+/// Ephemeral: agent turn claim. One body of an agent identity announces that it
+/// intends to run a turn for a set of inbound event ids. Sibling bodies running
+/// the same key on other machines compare `rank`/`body` tags and stand down.
+/// Self-addressed (`p` = the agent's own pubkey) so it rides the same global
+/// `#p` routing as observer frames and never enters channel history.
+pub const KIND_TURN_CLAIM: u32 = 20003;
 /// Ephemeral: owner-scoped encrypted agent observer telemetry and control frame.
 pub const KIND_AGENT_OBSERVER_FRAME: u32 = 24200;
 /// Ephemeral: huddle emoji reaction burst. Channel-scoped to the ephemeral

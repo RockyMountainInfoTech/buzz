@@ -99,12 +99,14 @@ async fn socket_owner_services_ping_shutdown_and_coalesces_overflow_ticks() {
     let (client, mut server) = test_ws_pair().await;
     let (tx, mut rx) = mpsc::channel(1);
     let (control_tx, _control_rx) = mpsc::channel(1);
+    let (claim_tx, _claim_rx) = mpsc::channel::<nostr::Event>(1);
     let (cmd_tx, cmd_rx) = mpsc::channel(64);
     let task = tokio::spawn(run_background_task(
         client,
         VecDeque::new(),
         tx,
         control_tx,
+        claim_tx,
         cmd_rx,
         Keys::generate(),
         "ws://127.0.0.1:1".into(),

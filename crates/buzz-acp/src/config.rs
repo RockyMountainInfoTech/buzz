@@ -401,6 +401,37 @@ pub struct CliArgs {
     #[arg(long, env = "BUZZ_ACP_NO_TYPING")]
     pub no_typing: bool,
 
+    /// Identifier of this body (machine) of the agent identity. Shown in logs
+    /// and carried on turn claims so sibling bodies running the same key on
+    /// other machines can tell each other apart. Defaults to the hostname.
+    #[arg(long, env = "BUZZ_ACP_BODY_ID")]
+    pub body_id: Option<String>,
+
+    /// Role of this body when the same agent key runs on several machines.
+    /// active: run turns (claims at rank 0). standby: yield to any active
+    /// body; with claims enabled it still claims at rank 1 and takes over when
+    /// no active body answers, with claims disabled it never runs a turn.
+    #[arg(
+        long,
+        env = "BUZZ_ACP_RUNNER_MODE",
+        default_value = "active",
+        value_enum
+    )]
+    pub runner_mode: crate::turn_claim::RunnerMode,
+
+    /// Turn-claim window in milliseconds. Before running a turn the harness
+    /// publishes an ephemeral claim and waits this long for a better-ranked
+    /// sibling claim; the best claim wins and the others stand down. 0
+    /// disables claims (active bodies dispatch immediately, standby bodies
+    /// drop every batch).
+    #[arg(
+        long,
+        env = "BUZZ_ACP_CLAIM_WINDOW_MS",
+        default_value_t = crate::turn_claim::DEFAULT_CLAIM_WINDOW_MS,
+        value_parser = clap::value_parser!(u64).range(0..=60_000)
+    )]
+    pub claim_window_ms: u64,
+
     /// Enable NIP-AE agent core memory injection.
     ///
     /// Memory injection is on by default. When enabled, the harness
@@ -572,6 +603,12 @@ pub struct Config {
     pub max_turns_per_session: u32,
     pub presence_enabled: bool,
     pub typing_enabled: bool,
+    /// Identifier of this body (machine) of the agent identity.
+    pub body_id: String,
+    /// Role of this body when the same key runs on several machines.
+    pub runner_mode: crate::turn_claim::RunnerMode,
+    /// Turn-claim window in milliseconds; 0 disables claims.
+    pub claim_window_ms: u64,
     /// Whether NIP-AE agent core memory injection is enabled. When false,
     /// the harness skips the per-session core engram fetch and renders no
     /// `<core-memory>` section. On by default; disabled via the
@@ -1184,6 +1221,9 @@ impl Config {
             max_turns_per_session: args.max_turns_per_session,
             presence_enabled: !args.no_presence,
             typing_enabled: !args.no_typing,
+            body_id: crate::turn_claim::resolve_body_id(args.body_id.as_deref()),
+            runner_mode: args.runner_mode,
+            claim_window_ms: args.claim_window_ms,
             memory_enabled: args.memory && !args.no_memory,
             model,
             effort_level: args.effort_level,
@@ -1226,9 +1266,12 @@ impl Config {
             format!(" allowed_respond_to=[{}]", modes.join(","))
         };
         format!(
-            "relay={} pubkey={} agent_cmd={} {} mcp_cmd={} idle_timeout={}s max_turn={}s agents={} heartbeat={}s subscribe={:?} dedup={:?} session_policy={} meh={:?} ignore_self={} context_limit={} max_turns_per_session={} presence={} typing={} memory={} model={} permission_mode={} {}{}",
+            "relay={} pubkey={} body={} runner_mode={} claim_window_ms={} agent_cmd={} {} mcp_cmd={} idle_timeout={}s max_turn={}s agents={} heartbeat={}s subscribe={:?} dedup={:?} session_policy={} meh={:?} ignore_self={} context_limit={} max_turns_per_session={} presence={} typing={} memory={} model={} permission_mode={} {}{}",
             self.relay_url,
             self.keys.public_key().to_hex(),
+            self.body_id,
+            self.runner_mode,
+            self.claim_window_ms,
             self.agent_command,
             self.agent_args.join(" "),
             self.mcp_command,
@@ -1555,6 +1598,9 @@ mod tests {
             session_policy: crate::scope::SessionPolicy::Channel,
             multiple_event_handling: MultipleEventHandling::Queue,
             ignore_self: true,
+            body_id: "test-body".to_string(),
+            runner_mode: crate::turn_claim::RunnerMode::Active,
+            claim_window_ms: 0,
             kinds_override: None,
             channels_override: None,
             no_mention_filter: false,

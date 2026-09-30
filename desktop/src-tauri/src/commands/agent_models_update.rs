@@ -182,6 +182,14 @@ pub async fn update_managed_agent(
         if let Some(parallelism) = input.parallelism {
             record.parallelism = parallelism;
         }
+        if let Some(assigned) = input.assigned_machine {
+            let assigned =
+                crate::managed_agents::runner_body::normalize_machine_name(Some(&assigned));
+            if let Some(name) = assigned.as_deref() {
+                crate::managed_agents::runner_body::validate_machine_name(name)?;
+            }
+            record.assigned_machine = assigned;
+        }
         // turn_timeout_seconds is intentionally not applied here —
         // BUZZ_ACP_TURN_TIMEOUT is deprecated and ignored by the harness.
         // Use idle_timeout_seconds or max_turn_duration_seconds instead.

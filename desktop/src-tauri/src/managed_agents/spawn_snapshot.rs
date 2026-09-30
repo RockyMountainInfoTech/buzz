@@ -131,6 +131,10 @@ pub(crate) struct SpawnConfigSnapshot {
     pub idle_timeout_seconds: Option<u64>,
     pub max_turn_duration_seconds: Option<u64>,
     pub parallelism: u32,
+    /// Assignment participates in the restart diff so changing it re-derives
+    /// the body role on the next spawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned_machine: Option<String>,
     /// The startup effort the harness will actually apply, resolved by
     /// [`effective_effort`]: the single effort key the harness-agnostic
     /// projection left in `descriptor.env` under the runtime's destination key.
@@ -251,6 +255,7 @@ impl SpawnConfigSnapshot {
             // pool and must badge. The diff surface consequently displays the
             // effective value — that is correct, it is what actually runs.
             parallelism: super::effective_parallelism(&descriptor.command, record.parallelism),
+            assigned_machine: record.assigned_machine.clone(),
             // Sole effort representation — see the field doc and the `env`
             // strip above. Reads the single projected effort key the descriptor
             // resolver left in `descriptor.env`, so the badge compares exactly
