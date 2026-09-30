@@ -76,6 +76,17 @@ pub fn runner_mode_for(record: &ManagedAgentRecord, body_id: &str) -> &'static s
     }
 }
 
+/// Would the runner-body env (`BUZZ_ACP_BODY_ID`, `BUZZ_ACP_RUNNER_MODE`)
+/// differ for `record` between a body id of `old_body` and `new_body`?
+///
+/// Both keys are baked into the harness environment at spawn and are not part
+/// of `EffectiveAgentEnv`, so the global-config restart diff must consult this
+/// separately or a machine rename leaves running harnesses claiming turns
+/// under the old body id.
+pub fn runner_body_changed(record: &ManagedAgentRecord, old_body: &str, new_body: &str) -> bool {
+    old_body != new_body || runner_mode_for(record, old_body) != runner_mode_for(record, new_body)
+}
+
 /// Apply body id and runner mode to a harness spawn command.
 pub fn apply_runner_body_env(
     command: &mut std::process::Command,
@@ -146,6 +157,31 @@ mod tests {
         let r = record(Some("Mac-mini-2"));
         assert_eq!(runner_mode_for(&r, "mac-mini-2"), "active");
         assert_eq!(runner_mode_for(&r, "Andrews-Mini"), "standby");
+    }
+
+    #[test]
+    fn machine_rename_changes_runner_body_env() {
+        // Same name, same role: nothing to restart.
+        assert!(!runner_body_changed(&record(None), "mini-2", "mini-2"));
+        // Renaming the body changes the claim identity even for unassigned agents.
+        assert!(runner_body_changed(&record(None), "mini-2", "studio"));
+        // Renaming onto/off the assigned machine flips active <-> standby.
+        assert!(runner_body_changed(
+            &record(Some("studio")),
+            "mini-2",
+            "studio"
+        ));
+        assert!(runner_body_changed(
+            &record(Some("mini-2")),
+            "mini-2",
+            "studio"
+        ));
+        // Case-only rename keeps the role but still changes the body id.
+        assert!(runner_body_changed(
+            &record(Some("mini-2")),
+            "mini-2",
+            "Mini-2"
+        ));
     }
 
     #[test]
