@@ -59,9 +59,16 @@ Behavior per flushed batch (`turn_claim::ClaimGate`, called from
 
 **Scope lease.** A claim names a batch, but a turn owns a scope (channel or
 thread) for as long as it runs, and follow-ups keep arriving during it. While
-a body holds any stake in a scope (a parked claim, a won clearance, or a
-dispatched turn) it pre-claims every new event admitted to that scope the
-moment the relay delivers it, before the event is ever flushed. A sibling that
+a body holds a live stake in a scope (a parked claim, a won clearance awaiting
+its flush, or a turn that is running right now) it pre-claims every new event
+admitted to that scope the moment the relay delivers it, before the event is
+ever flushed. A finished turn is not a stake: the main loop drops the scope's
+dispatch bookkeeping as soon as the turn result (or panic) is handled, so the
+next mention in a quiet scope opens a normal window and a worse-ranked body
+that covered the scope hands it back to the better one. Losing a claim
+(stand-down or cancel) voids every clearance this body held in that scope, so
+follow-ups it pre-claimed under the lost stake claim on their own and yield to
+the winner's pre-claims. A sibling that
 flushes the follow-up first parks it, sees the pre-claim inside its window,
 and stands down; a sibling that sees the pre-claim before flushing yields
 without claiming. When the running turn ends, the pre-claimed follow-up
@@ -88,7 +95,10 @@ content: ""
 
 The nonce lets a body recognize its own echoed claims and breaks the tie when
 two installs share a machine name (a warning is logged once per foreign nonce;
-give each install a distinct name). Claims without the tag still parse.
+give each install a distinct name). Claims without the tag still parse and
+lose every same-name tie: a harness that predates the tag ignores same-body
+claims outright, so only the upgraded side keeping the turn can converge —
+until both installs run this build, a shared name still double-answers.
 
 The claim is delivered on a dedicated subscription (`agent-turn-claim`,
 `kinds: [20003], #p: [self]`), the same path observer control frames use, so it

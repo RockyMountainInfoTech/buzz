@@ -195,7 +195,10 @@ pub fn claim_beats(
     body_b: &str,
     nonce_b: &str,
 ) -> bool {
-    (rank_a, body_a, nonce_a) < (rank_b, body_b, nonce_b)
+    // A claim without a nonce (a harness that predates the tag) never wins a
+    // same-name tie: that harness ignores same-body claims outright, so the
+    // upgraded side keeping the turn is the only outcome that can converge.
+    (rank_a, body_a, nonce_a.is_empty(), nonce_a) < (rank_b, body_b, nonce_b.is_empty(), nonce_b)
 }
 
 /// Build and sign a claim event for `event_ids`.
@@ -286,7 +289,10 @@ pub struct ClaimGate {
     /// scope lease. A batch whose first id is here dispatches without a claim.
     cleared: HashMap<String, (SessionScope, Instant)>,
     /// Event id → (scope, dispatched-at) for turns this body spawned under a
-    /// claim, so a late better claim can still cancel the in-flight turn.
+    /// claim, so a late better claim can still cancel the in-flight turn. The
+    /// main loop drops a scope's entries as soon as its turn result or panic
+    /// is handled ([`ClaimGate::reconcile_dispatched`]); the TTL is only a
+    /// backstop.
     dispatched: HashMap<String, (SessionScope, Instant)>,
     /// Event id → (winner, seen-at) for ids a better sibling claimed. A batch
     /// containing any of them yields instead of claiming.
@@ -452,10 +458,13 @@ impl ClaimGate {
         }
     }
 
-    /// Whether this body currently holds a stake in `scope`: a parked claim, a
-    /// won clearance, or a dispatched turn. While it does, new events in the
-    /// scope are pre-claimed on arrival (see [`ClaimGate::pre_claim`]) so a
-    /// sibling cannot answer a follow-up while this body's turn runs.
+    /// Whether this body currently holds a live stake in `scope`: a parked
+    /// claim, a won clearance awaiting its flush, or a turn that is running
+    /// right now. While it does, new events in the scope are pre-claimed on
+    /// arrival (see [`ClaimGate::pre_claim`]) so a sibling cannot answer a
+    /// follow-up while this body's turn runs. A finished turn is not a stake:
+    /// the next mention in a quiet scope opens a normal window, so a
+    /// worse-ranked body that once covered the scope hands it back.
     pub fn holds_scope(&self, scope: &SessionScope) -> bool {
         self.parked.values().any(|p| p.batch.scope == *scope)
             || self.cleared.values().any(|(s, _)| s == scope)
@@ -474,10 +483,15 @@ impl ClaimGate {
         now: Instant,
         mut publish: impl FnMut(&[String]),
     ) -> bool {
-        if !self.claims_enabled() || !self.holds_scope(scope) {
+        if !self.claims_enabled() {
             return false;
         }
+        // Prune first: an expired stake must not authorize a fresh claim, or
+        // the lease would renew itself forever on a scope that never quiets.
         self.prune(now);
+        if !self.holds_scope(scope) {
+            return false;
+        }
         if self.yielded.contains_key(event_id) || self.cleared.contains_key(event_id) {
             return false;
         }
@@ -556,6 +570,10 @@ impl ClaimGate {
                 .then(|| key.clone())
         });
         if let Some(p) = parked_key.and_then(|key| self.parked.remove(&key)) {
+            // The stake that authorized any follow-up pre-claims in this scope
+            // is gone with the batch: those follow-ups must claim on their own
+            // (and will yield if the winner pre-claimed them too).
+            self.void_scope_clearances(&p.batch.scope);
             return ClaimVerdict::StandDown {
                 batch: p.batch,
                 winner: claim.body_id.clone(),
@@ -570,6 +588,7 @@ impl ClaimGate {
             for id in &claim.event_ids {
                 self.dispatched.remove(id);
             }
+            self.void_scope_clearances(&scope);
             return ClaimVerdict::CancelInFlight {
                 scope,
                 winner: claim.body_id.clone(),
@@ -578,12 +597,19 @@ impl ClaimGate {
         ClaimVerdict::Ignore
     }
 
-    /// Forget dispatch bookkeeping for a finished turn.
-    #[cfg(test)]
-    pub fn on_turn_finished(&mut self, batch: &FlushBatch) {
-        for id in batch_event_ids(batch) {
-            self.dispatched.remove(&id);
-        }
+    /// Drop dispatch bookkeeping for every scope that no longer has a live
+    /// turn. Called by the main loop after each turn result or panic is
+    /// handled, with `live` answering "does a task for this scope still
+    /// exist?", so a finished turn stops being a stake the moment it ends
+    /// rather than when the TTL expires.
+    pub fn reconcile_dispatched(&mut self, live: impl Fn(&SessionScope) -> bool) {
+        self.dispatched.retain(|_, (scope, _)| live(scope));
+    }
+
+    /// Forget every won clearance in `scope` (a lost claim voids the stake
+    /// that produced them).
+    fn void_scope_clearances(&mut self, scope: &SessionScope) {
+        self.cleared.retain(|_, (s, _)| s != scope);
     }
 
     /// Drop bookkeeping older than [`DISPATCHED_TTL`].
@@ -673,6 +699,10 @@ mod tests {
         assert!(claim_beats(0, "same", "aaaa", 0, "same", "bbbb"));
         assert!(!claim_beats(0, "same", "bbbb", 0, "same", "aaaa"));
         assert!(!claim_beats(0, "same", "aaaa", 0, "same", "aaaa"));
+        // A nonce-less claim (pre-upgrade harness) loses every same-name tie.
+        assert!(claim_beats(0, "same", "zzzz", 0, "same", ""));
+        assert!(!claim_beats(0, "same", "", 0, "same", "aaaa"));
+        assert!(claim_beats(0, "alpha", "", 0, "beta", "aaaa"));
     }
 
     #[test]
@@ -808,7 +838,8 @@ mod tests {
         g.mark_dispatched(&taken, now);
         assert!(g.dispatched.contains_key(&ids[0]));
         assert!(g.holds_scope(&scope));
-        g.on_turn_finished(&taken);
+        // Turn over: the main loop reconciles against live tasks.
+        g.reconcile_dispatched(|_| false);
         assert!(g.dispatched.is_empty());
         assert!(!g.holds_scope(&scope));
     }
@@ -978,6 +1009,115 @@ mod tests {
                 winner: "a-box".into()
             }
         );
+    }
+
+    #[test]
+    fn finished_turn_is_not_a_stake_so_a_worse_rank_reopens_the_window() {
+        // Standby covered a dead active. Once its turn ends, the next mention
+        // must open a normal window (and lose to the returning active), not
+        // ride the old stake straight to dispatch.
+        let k = keys();
+        let now = Instant::now();
+        let channel = Uuid::new_v4();
+        let mut g = gate("standby-box", RunnerMode::Standby, 10);
+        let e1 = batch_in(&k, 1, channel);
+        let scope = e1.scope.clone();
+        g.admit(e1, now, |_| {});
+        let released = g.release_expired(now + Duration::from_millis(10));
+        let (_, e1) = g.admit(released.into_iter().next().unwrap(), now, |_| {});
+        g.mark_dispatched(&e1.unwrap(), now);
+        assert!(g.holds_scope(&scope));
+        g.reconcile_dispatched(|_| false);
+        assert!(!g.holds_scope(&scope));
+
+        let e2 = batch_in(&k, 1, channel);
+        let e2_ids = batch_event_ids(&e2);
+        assert!(
+            !g.pre_claim(&e2_ids[0], &scope, now, |_| panic!(
+                "no stake, no pre-claim"
+            )),
+            "a finished turn must not authorize a pre-claim"
+        );
+        let mut published = Vec::new();
+        let (d, _) = g.admit(e2, now, |ids| published.push(ids.to_vec()));
+        assert_eq!(
+            d,
+            GateDecision::Parked,
+            "window reopens for the next mention"
+        );
+        assert_eq!(published, vec![e2_ids.clone()]);
+        assert!(matches!(
+            g.on_claim(&claim(&e2_ids, "active-box", 0), now),
+            ClaimVerdict::StandDown { .. }
+        ));
+    }
+
+    #[test]
+    fn expired_stake_does_not_renew_the_lease() {
+        // A pre-claim arriving after the TTL must not be authorized by the
+        // stale entry prune is about to drop.
+        let k = keys();
+        let now = Instant::now();
+        let channel = Uuid::new_v4();
+        let mut g = gate("b-box", RunnerMode::Active, 10);
+        let e1 = batch_in(&k, 1, channel);
+        let scope = e1.scope.clone();
+        g.admit(e1, now, |_| {});
+        let released = g.release_expired(now + Duration::from_millis(10));
+        let (_, e1) = g.admit(released.into_iter().next().unwrap(), now, |_| {});
+        g.mark_dispatched(&e1.unwrap(), now);
+        let later = now + DISPATCHED_TTL + Duration::from_secs(1);
+        assert!(!g.pre_claim(&"e".repeat(64), &scope, later, |_| panic!("stale stake")));
+        assert!(g.dispatched.is_empty());
+        assert!(g.cleared.is_empty());
+    }
+
+    #[test]
+    fn standing_down_voids_pre_claimed_follow_ups_in_that_scope() {
+        // Both bodies parked e1; e2 arrived while parked, so both pre-claimed
+        // it. The loser stands down on e1 and must not run e2 window-free on
+        // the strength of a stake it no longer holds.
+        let k = keys();
+        let now = Instant::now();
+        let channel = Uuid::new_v4();
+        let mut g = gate("b-box", RunnerMode::Active, 750);
+        let e1 = batch_in(&k, 1, channel);
+        let e1_ids = batch_event_ids(&e1);
+        let scope = e1.scope.clone();
+        g.admit(e1, now, |_| {});
+        let e2 = batch_in(&k, 1, channel);
+        let e2_ids = batch_event_ids(&e2);
+        assert!(g.pre_claim(&e2_ids[0], &scope, now, |_| {}));
+        assert!(matches!(
+            g.on_claim(&claim(&e1_ids, "a-box", 0), now),
+            ClaimVerdict::StandDown { .. }
+        ));
+        assert!(
+            g.cleared.is_empty(),
+            "lost stake voids the scope's clearances"
+        );
+        // e2 flushes: it must claim (window) — or yield once the winner's own
+        // pre-claim for e2 lands.
+        let (d, _) = g.admit(e2.clone(), now, |_| {});
+        assert_eq!(d, GateDecision::Parked);
+        assert!(matches!(
+            g.on_claim(&claim(&e2_ids, "a-box", 0), now),
+            ClaimVerdict::StandDown { .. }
+        ));
+        // Same for a cancelled in-flight turn.
+        let e3 = batch_in(&k, 1, channel);
+        let e3_ids = batch_event_ids(&e3);
+        let mut h = gate("b-box", RunnerMode::Active, 10);
+        h.admit(e3, now, |_| {});
+        let released = h.release_expired(now + Duration::from_millis(10));
+        let (_, e3) = h.admit(released.into_iter().next().unwrap(), now, |_| {});
+        h.mark_dispatched(&e3.unwrap(), now);
+        assert!(h.pre_claim(&"f".repeat(64), &scope, now, |_| {}));
+        assert!(matches!(
+            h.on_claim(&claim(&e3_ids, "a-box", 0), now),
+            ClaimVerdict::CancelInFlight { .. }
+        ));
+        assert!(h.cleared.is_empty());
     }
 
     #[test]
