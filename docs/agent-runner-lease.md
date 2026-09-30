@@ -63,7 +63,8 @@ a body holds a live stake in a scope (a parked claim, a won clearance awaiting
 its flush, or a turn that is running right now) it pre-claims every new event
 admitted to that scope the moment the relay delivers it, before the event is
 ever flushed. A finished turn is not a stake: the main loop drops the scope's
-dispatch bookkeeping as soon as the turn result (or panic) is handled, so the
+dispatch bookkeeping as soon as the turn result (or panic, including one
+drained alongside another turn's result) is handled, so the
 next mention in a quiet scope opens a normal window and a worse-ranked body
 that covered the scope hands it back to the better one. Losing a claim
 (stand-down or cancel) voids every clearance this body held in that scope, so
