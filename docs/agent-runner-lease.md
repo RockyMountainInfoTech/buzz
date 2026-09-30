@@ -99,7 +99,9 @@ NOTICE (from block/buzz#3912). Advisory only: arbitration stays client-side.
   name or hostname; `BUZZ_ACP_RUNNER_MODE` = `active` when the agent is
   unassigned or assigned to this machine (case-insensitive), else `standby`.
   Both keys are reserved so user env cannot shadow them. The assignment is
-  part of the spawn snapshot, so changing it restarts the agent.
+  part of the spawn snapshot, so changing it restarts the agent. Renaming the
+  machine in "Agent hosting" restarts every running local agent whose body id
+  or role would change, so claims never carry a stale body id.
 
 ## Operating a two-machine fleet
 

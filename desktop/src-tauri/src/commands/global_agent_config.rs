@@ -154,7 +154,8 @@ enum RestartOutcome {
 ///   provider/model key, now unblocked), OR
 /// - it was already `Ready`, its process is currently alive, and its effective
 ///   env changed (provider, model, or env var update that needs a restart to
-///   take effect, since env is baked at spawn time).
+///   take effect, since env is baked at spawn time), or its runner-body env
+///   changed (machine name renamed, flipping the body id or active/standby role).
 fn collect_restart_candidates(
     app: &AppHandle,
     old_global: &GlobalAgentConfig,
@@ -185,6 +186,11 @@ fn collect_restart_candidates(
         .lock()
         .unwrap_or_else(|error| error.into_inner());
 
+    // Body id resolved once per save (may shell out to `hostname` when no
+    // machine name is configured); the per-record role derives from it.
+    let old_body = crate::managed_agents::runner_body::local_body_id(old_global);
+    let new_body = crate::managed_agents::runner_body::local_body_id(new_global);
+
     let candidates = records
         .iter()
         .filter(|record| {
@@ -211,7 +217,15 @@ fn collect_restart_candidates(
             // restart for a process that already exited between the pre-filter
             // scan and Phase 2.  NotReady→Ready bypasses the alive check
             // because Phase 2 will stop-then-start unconditionally.
-            let env_changed = old_ready && old_effective.env != new_effective.env;
+            //
+            // The runner-body keys (BUZZ_ACP_BODY_ID / BUZZ_ACP_RUNNER_MODE)
+            // are injected at spawn outside `EffectiveAgentEnv`, so a machine
+            // rename is diffed here explicitly.
+            let runner_changed = crate::managed_agents::runner_body::runner_body_changed(
+                record, &old_body, &new_body,
+            );
+            let env_changed =
+                old_ready && (old_effective.env != new_effective.env || runner_changed);
 
             should_restart_on_config_change(old_ready, new_ready, env_changed)
         })
@@ -315,7 +329,14 @@ async fn restart_local_agent_on_config_change(
         let old_ready = matches!(agent_readiness(&old_effective), AgentReadiness::Ready);
         let new_ready = matches!(agent_readiness(&new_effective), AgentReadiness::Ready);
         // Under lock, the alive check was already done above via process_is_running.
-        let env_changed = old_ready && old_effective.env != new_effective.env;
+        // Runner-body keys live outside `EffectiveAgentEnv`; diff them too so a
+        // machine rename qualifies here exactly as in the pre-filter.
+        let runner_changed = crate::managed_agents::runner_body::runner_body_changed(
+            record,
+            &crate::managed_agents::runner_body::local_body_id(&old_global_clone),
+            &crate::managed_agents::runner_body::local_body_id(&new_global_clone),
+        );
+        let env_changed = old_ready && (old_effective.env != new_effective.env || runner_changed);
         if !should_restart_on_config_change(old_ready, new_ready, env_changed) {
             return Err(format!(
                 "agent {pubkey_owned} restart condition no longer valid under lock"
