@@ -910,6 +910,33 @@ fn inbound_managed_agent_content(
     }
 }
 
+/// An inbound projection that omits `assigned_machine` (an older publisher)
+/// must leave the local assignment alone; `null` clears; a name assigns.
+#[test]
+fn inbound_assigned_machine_absent_preserves_null_clears_name_assigns() {
+    let mut agents = vec![local_agent()];
+    agents[0].assigned_machine = Some("Mac-mini-2".into());
+
+    let mut absent = inbound_managed_agent_content("Remote Agent", Some("persona-1"), None);
+    absent.assigned_machine = None;
+    apply_inbound_managed_agent(&mut agents, AGENT_PUBKEY, absent);
+    assert_eq!(
+        agents[0].assigned_machine.as_deref(),
+        Some("Mac-mini-2"),
+        "absent key must not clear the assignment"
+    );
+
+    let mut assign = inbound_managed_agent_content("Remote Agent", Some("persona-1"), None);
+    assign.assigned_machine = Some(Some("Andrews-Mini".into()));
+    apply_inbound_managed_agent(&mut agents, AGENT_PUBKEY, assign);
+    assert_eq!(agents[0].assigned_machine.as_deref(), Some("Andrews-Mini"));
+
+    let mut clear = inbound_managed_agent_content("Remote Agent", Some("persona-1"), None);
+    clear.assigned_machine = Some(None);
+    apply_inbound_managed_agent(&mut agents, AGENT_PUBKEY, clear);
+    assert_eq!(agents[0].assigned_machine, None, "explicit null clears");
+}
+
 #[test]
 fn inbound_definition_less_agent_rejects_invisible_prompt() {
     let inbound = inbound_managed_agent_content("Remote Agent", None, Some("Review\u{200B} code."));
