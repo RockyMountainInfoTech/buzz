@@ -756,7 +756,12 @@ fn apply_inbound_managed_agent(
             local.persona_source_version = inbound.persona_source_version;
         }
         local.parallelism = inbound.parallelism;
-        local.assigned_machine = inbound.assigned_machine;
+        // Presence-aware: an event from a publisher that predates machine
+        // assignment omits the key and must not clear a local assignment.
+        // Lease-aware publishers always send it (null = explicit clear).
+        if let Some(assigned_machine) = inbound.assigned_machine {
+            local.assigned_machine = assigned_machine;
+        }
         local.respond_to = inbound.respond_to;
         local.respond_to_allowlist = inbound.respond_to_allowlist;
         return super::super::agent_models::managed_agent_access_policy_changed(

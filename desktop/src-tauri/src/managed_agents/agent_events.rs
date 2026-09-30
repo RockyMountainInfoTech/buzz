@@ -28,6 +28,15 @@ use serde::{Deserialize, Serialize};
 
 use super::{ManagedAgentRecord, RespondTo};
 
+/// Deserialize an optional field so that a present `null` is `Some(None)` and
+/// only an absent key is `None` (with `#[serde(default)]`).
+fn deserialize_present_nullable<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Some)
+}
+
 /// The JSON body stored in a managed-agent event's content field.
 ///
 /// Explicit opt-IN allowlist of the agent's public identity + behavioral
@@ -52,8 +61,18 @@ pub struct ManagedAgentEventContent {
     pub persona_source_version: Option<String>,
     pub parallelism: u32,
     /// Shared machine assignment (see `ManagedAgentRecord::assigned_machine`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assigned_machine: Option<String>,
+    ///
+    /// Presence-aware: `None` means the key was absent on the wire (a publisher
+    /// that predates machine assignment), and the reader leaves its local
+    /// value alone; `Some(None)` is an explicit clear (`null`); `Some(name)`
+    /// assigns. Lease-aware publishers always emit the key so an older peer's
+    /// replaceable publish can never wipe an assignment by omission.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_nullable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub assigned_machine: Option<Option<String>>,
     /// Inbound author gate mode (wire string).
     pub respond_to: RespondTo,
     /// Allowlisted author pubkeys when `respond_to == Allowlist`. These are
@@ -104,7 +123,7 @@ pub fn agent_event_content(record: &ManagedAgentRecord) -> ManagedAgentEventCont
             record.persona_source_version.clone()
         },
         parallelism: record.parallelism,
-        assigned_machine: record.assigned_machine.clone(),
+        assigned_machine: Some(record.assigned_machine.clone()),
         respond_to: record.respond_to,
         respond_to_allowlist: record.respond_to_allowlist.clone(),
     }
@@ -233,6 +252,31 @@ mod tests {
             relay_mesh: None,
             effort_level: None,
         }
+    }
+
+    #[test]
+    fn assigned_machine_is_always_on_the_wire_and_absence_is_distinguishable() {
+        // Unassigned record: the key is present as null (explicit clear).
+        let json = serde_json::to_string(&agent_event_content(&sample_agent())).unwrap();
+        assert!(
+            json.contains("\"assigned_machine\":null"),
+            "lease-aware publisher must emit the key: {json}"
+        );
+        // Assigned record round-trips the name.
+        let mut assigned = sample_agent();
+        assigned.assigned_machine = Some("Mac-mini-2".into());
+        let json = serde_json::to_string(&agent_event_content(&assigned)).unwrap();
+        let parsed: ManagedAgentEventContent = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.assigned_machine, Some(Some("Mac-mini-2".into())));
+        // Explicit null parses as a clear.
+        let parsed: ManagedAgentEventContent =
+            serde_json::from_str(&json.replace("\"Mac-mini-2\"", "null")).unwrap();
+        assert_eq!(parsed.assigned_machine, Some(None));
+        // A publisher that predates the field omits the key: not a clear.
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value.as_object_mut().unwrap().remove("assigned_machine");
+        let parsed: ManagedAgentEventContent = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.assigned_machine, None);
     }
 
     #[test]

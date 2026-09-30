@@ -43,18 +43,36 @@ Behavior per flushed batch (`turn_claim::ClaimGate`, called from
    (hard standby).
 2. Claims enabled: the body publishes a claim for the batch's event ids and
    parks the batch for one window.
-   - A sibling claim with a better rank (lower rank, then smaller body id)
-     for any of those ids arrives inside the window: stand down, drop the
-     batch, clear 👀.
+   - A sibling claim with a better rank (lower rank, then smaller body id,
+     then smaller per-process nonce) for any of those ids arrives inside the
+     window: stand down, drop the batch, clear 👀. Every id the winner named
+     is remembered, so the remainder of a split batch (the winner claimed
+     `[e1, e2]`, this body had only `[e1]` parked) yields on its next flush
+     instead of opening a fresh window.
    - The window closes without a better claim: dispatch the batch (no second
-     claim).
+     claim). The gate records the dispatch only once a worker actually took
+     the batch; a batch handed back by a busy-owner hold or an exhausted pool
+     keeps its won clearance and is never treated as cancellable.
    - A better claim arrives after dispatch: cancel the in-flight turn
-     (`ControlSignal::Cancel`). Bookkeeping for dispatched turns expires after
-     15 minutes so the map stays bounded.
+     (`ControlSignal::Cancel`). All bookkeeping (dispatched, cleared, yielded)
+     expires after 15 minutes so the maps stay bounded.
+
+**Scope lease.** A claim names a batch, but a turn owns a scope (channel or
+thread) for as long as it runs, and follow-ups keep arriving during it. While
+a body holds any stake in a scope (a parked claim, a won clearance, or a
+dispatched turn) it pre-claims every new event admitted to that scope the
+moment the relay delivers it, before the event is ever flushed. A sibling that
+flushes the follow-up first parks it, sees the pre-claim inside its window,
+and stands down; a sibling that sees the pre-claim before flushing yields
+without claiming. When the running turn ends, the pre-claimed follow-up
+dispatches with no second window. A better claim on a pre-claimed id (the
+active body coming back while a standby is mid-turn) voids the clearance and
+the standby yields that follow-up.
 
 Failover falls out of the ranking: an `active` body always wins against a
 `standby` body, and a dead `active` body publishes no claim, so the standby
-wins after one window.
+wins after one window. A body that dies mid-turn loses that turn and any
+follow-ups it already pre-claimed; the next new mention fails over normally.
 
 ### Claim event
 
@@ -64,8 +82,13 @@ tags: ["p", <agent pubkey>]      # self-addressed: global #p routing
       ["e", <inbound event id>]  # one per event in the batch
       ["body", <body id>]
       ["rank", "0" | "1"]
+      ["nonce", <8 hex chars, fixed per harness process>]
 content: ""
 ```
+
+The nonce lets a body recognize its own echoed claims and breaks the tie when
+two installs share a machine name (a warning is logged once per foreign nonce;
+give each install a distinct name). Claims without the tag still parse.
 
 The claim is delivered on a dedicated subscription (`agent-turn-claim`,
 `kinds: [20003], #p: [self]`), the same path observer control frames use, so it
@@ -90,7 +113,11 @@ NOTICE (from block/buzz#3912). Advisory only: arbitration stays client-side.
 - `ManagedAgentRecord::assigned_machine` (optional). Shared through the
   kind:30177 projection so every install agrees on the assignment. Set per
   agent in the edit dialog ("Assigned machine"), or at creation from the
-  install's default.
+  install's default. The projection always carries the key (`null` when
+  unassigned); an inbound event that omits it (a publisher that predates
+  assignment) leaves the local value alone, so an older install's replaceable
+  publish cannot wipe an assignment by omission. Upgrading republishes each
+  agent's projection once (the key is new on the wire).
 - `GlobalAgentConfig::machine_name` and `::default_assigned_machine`, edited
   in Settings → Agents → "Agent hosting". Local to the install
   (`global-agent-config.json`), never relay-synced, which keeps the per-device
@@ -115,8 +142,10 @@ NOTICE (from block/buzz#3912). Advisory only: arbitration stays client-side.
 
 Log lines to expect: `turn claims enabled` at startup with body and mode;
 `standby body — leaving this turn to the active body` on hard standby; `turn
-claim lost — standing down` and `late better turn claim — cancelling` when
-claims arbitrate.
+claim lost — standing down`, `turn claim yielded — sibling body already holds
+these events`, and `late better turn claim — cancelling` when claims
+arbitrate; `another body claims turns under this machine name` on a name
+collision.
 
 ## Not in this change
 

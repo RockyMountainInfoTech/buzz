@@ -3614,6 +3614,31 @@ async fn run_harness(
                             // guard's cleanup may race with this add, leaving a
                             // cosmetic stale 👀. Acceptable — see ReactionGuard docs.
                             queued.mark_seen(&ctx.rest_client);
+                            // Scope lease: while this body holds a stake in the
+                            // scope (parked, cleared, or running a turn), claim
+                            // the follow-up now rather than when the running
+                            // turn ends, so a sibling that flushes it first
+                            // stands down instead of answering it too.
+                            if queued.accepted {
+                                let (claim_body, claim_rank, claim_nonce) = (
+                                    claim_gate.body_id().to_string(),
+                                    claim_gate.rank(),
+                                    claim_gate.nonce().to_string(),
+                                );
+                                let pre_claimed = claim_gate.pre_claim(
+                                    &queued.event_id_hex,
+                                    &queued.scope,
+                                    tokio::time::Instant::now(),
+                                    |ids| claim_publisher.publish(ids, &claim_body, claim_rank, &claim_nonce),
+                                );
+                                if pre_claimed {
+                                    tracing::debug!(
+                                        event_id = %queued.event_id_hex,
+                                        scope = %queued.scope.telemetry_label(),
+                                        "turn claim published for follow-up in a held scope"
+                                    );
+                                }
+                            }
                             // Event is already queued. The authorized ingress
                             // retains its verified author, resolved scope, and
                             // event data through the optional steer/interrupt
@@ -4109,7 +4134,7 @@ async fn run_harness(
                 if event.pubkey.to_hex() != pubkey_hex {
                     tracing::debug!(author = %event.pubkey.to_hex(), "ignoring turn claim from another key");
                 } else if let Some(claim) = turn_claim::TurnClaim::parse(&event) {
-                    match claim_gate.on_claim(&claim) {
+                    match claim_gate.on_claim(&claim, tokio::time::Instant::now()) {
                         turn_claim::ClaimVerdict::StandDown { batch, winner } => {
                             let ids = turn_claim::batch_event_ids(&batch);
                             tracing::info!(
@@ -4562,14 +4587,39 @@ fn dispatch_pending(
         // Turn-claim gate: with claims enabled a batch is parked for one
         // window while sibling bodies of this key compare claims; with claims
         // disabled an active body dispatches at once and a standby body drops.
-        let (claim_body, claim_rank) = (claims.body_id().to_string(), claims.rank());
+        let (claim_body, claim_rank, claim_nonce) = (
+            claims.body_id().to_string(),
+            claims.rank(),
+            claims.nonce().to_string(),
+        );
         let batch = match claims.admit(batch, now, |ids| {
             if let Some(publisher) = claim_publisher {
-                publisher.publish(ids, &claim_body, claim_rank);
+                publisher.publish(ids, &claim_body, claim_rank, &claim_nonce);
             }
         }) {
             (turn_claim::GateDecision::Dispatch, Some(batch)) => batch,
             (turn_claim::GateDecision::Parked, _) => continue,
+            (turn_claim::GateDecision::Yield { winner }, Some(batch)) => {
+                // A better sibling already claimed part of this batch (it
+                // pre-claimed a follow-up while its turn ran, or claimed the
+                // whole of a batch we only saw part of). No window: it answers.
+                let ids = turn_claim::batch_event_ids(&batch);
+                tracing::info!(
+                    channel = %batch.channel_id,
+                    scope = %batch.scope.telemetry_label(),
+                    winner = %winner,
+                    events = ids.len(),
+                    "turn claim yielded — sibling body already holds these events"
+                );
+                queue.mark_complete(batch.scope.clone());
+                let rc = ctx.rest_client.clone();
+                tokio::spawn(async move {
+                    for eid in &ids {
+                        pool::reaction_remove(&rc, eid, "👀").await;
+                    }
+                });
+                continue;
+            }
             (turn_claim::GateDecision::Drop, Some(batch)) => {
                 let ids = turn_claim::batch_event_ids(&batch);
                 tracing::info!(
@@ -4625,6 +4675,7 @@ fn dispatch_pending(
                         }),
                     );
                 }
+                claims.restore_clearance(&batch, now);
                 held.push(batch);
                 continue;
             }
@@ -4648,6 +4699,7 @@ fn dispatch_pending(
             None => {
                 let pending = queue.pending_channels();
                 tracing::debug!(pending_channels = pending, "pool_exhausted");
+                claims.restore_clearance(&batch, now);
                 queue.requeue_preserve_timestamps(batch);
                 queue.mark_complete(&scope);
                 break;
@@ -4685,6 +4737,10 @@ fn dispatch_pending(
             DedupMode::Queue => Some(batch.clone()),
             DedupMode::Drop => None,
         };
+        // The claim gate learns about the spawn only now: a batch that admit()
+        // cleared but no worker took (hold, pool exhausted) was handed back
+        // above and must never look cancellable.
+        claims.mark_dispatched(&batch, now);
 
         let result_tx = pool.result_tx();
         let ctx_clone = Arc::clone(ctx);
