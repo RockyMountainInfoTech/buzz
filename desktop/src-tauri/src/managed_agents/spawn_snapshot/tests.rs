@@ -60,6 +60,7 @@ fn record() -> ManagedAgentRecord {
         idle_timeout_seconds: None,
         max_turn_duration_seconds: None,
         parallelism: 1,
+        assigned_machine: None,
         system_prompt: Some("You are a test agent.".into()),
         model: None,
         provider: None,

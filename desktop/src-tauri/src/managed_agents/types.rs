@@ -138,6 +138,7 @@ impl AgentDefinition {
             idle_timeout_seconds: None,
             max_turn_duration_seconds: None,
             parallelism: default_agent_parallelism(),
+            assigned_machine: None,
             session_policy: self.session_policy,
             system_prompt: (!self.system_prompt.is_empty()).then_some(self.system_prompt),
             model: self.model,
@@ -306,6 +307,12 @@ pub struct ManagedAgentRecord {
     pub max_turn_duration_seconds: Option<u64>,
     #[serde(default = "default_agent_parallelism")]
     pub parallelism: u32,
+    /// Machine (body id) this agent is assigned to run on. Shared through the
+    /// kind:30177 projection so every install agrees; each install compares
+    /// it to its own machine name at spawn to pick active vs standby. `None`
+    /// keeps the legacy behavior (every install runs the agent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned_machine: Option<String>,
     /// ACP conversation boundary last applied to this record. Linked agents
     /// are re-pinned from their definition at restart; definition records use
     /// this same field as their durable value.
@@ -559,6 +566,7 @@ pub struct ManagedAgentSummary {
     pub idle_timeout_seconds: Option<u64>,
     pub max_turn_duration_seconds: Option<u64>,
     pub parallelism: u32,
+    pub assigned_machine: Option<String>,
     /// Effective definition-owned ACP conversation boundary.
     pub session_policy: super::AcpSessionPolicy,
     pub system_prompt: Option<String>,

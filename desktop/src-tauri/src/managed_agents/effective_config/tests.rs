@@ -61,6 +61,7 @@ fn record(
         idle_timeout_seconds: None,
         max_turn_duration_seconds: None,
         parallelism: 1,
+        assigned_machine: None,
         system_prompt: prompt.map(str::to_string),
         model: model.map(str::to_string),
         provider: provider.map(str::to_string),

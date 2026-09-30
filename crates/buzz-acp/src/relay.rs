@@ -118,7 +118,7 @@ use std::time::Instant;
 
 use buzz_core::kind::{
     KIND_AGENT_OBSERVER_FRAME, KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION,
-    KIND_TYPING_INDICATOR,
+    KIND_TURN_CLAIM, KIND_TYPING_INDICATOR,
 };
 use futures_util::{SinkExt, StreamExt};
 use nostr::{Event, EventBuilder, Keys, Kind, RelayUrl, Tag};
@@ -659,6 +659,7 @@ enum RelayMessage {
 const MEMBERSHIP_NOTIF_SUB_ID: &str = "membership-notif";
 /// Subscription ID for encrypted owner-to-agent observer control frames.
 const OBSERVER_CONTROL_SUB_ID: &str = "agent-observer-control";
+const TURN_CLAIM_SUB_ID: &str = "agent-turn-claim";
 
 /// Commands sent from `HarnessRelay` to the background WebSocket task.
 enum RelayCommand {
@@ -678,6 +679,8 @@ enum RelayCommand {
     SubscribeMembership,
     /// Subscribe to encrypted observer control frames addressed to this agent.
     SubscribeObserverControls,
+    /// Subscribe to turn claims published by sibling bodies of this agent key.
+    SubscribeTurnClaims,
     /// Publish a signed event to the relay (for typing indicators, etc.).
     PublishEvent { event: Box<Event> },
     /// Floor `since` for membership notification replay; events before startup are never re-delivered.
@@ -698,6 +701,7 @@ pub struct HarnessRelay {
     event_rx: mpsc::Receiver<Option<BuzzEvent>>,
     /// Receiver for encrypted observer control events addressed to this agent.
     observer_control_rx: Option<mpsc::Receiver<Event>>,
+    turn_claim_rx: Option<mpsc::Receiver<Event>>,
     /// Sender for commands to the background task.
     cmd_tx: mpsc::Sender<RelayCommand>,
     /// HTTP client for HTTP bridge calls.
@@ -728,6 +732,17 @@ impl RelayEventPublisher {
                 event: Box::new(event),
             })
             .await
+            .map_err(|_| RelayError::ConnectionClosed)
+    }
+
+    /// Publish a signed event without awaiting; fails fast when the command
+    /// channel is full or closed. Used from synchronous dispatch paths (turn
+    /// claims) where blocking the main loop is not acceptable.
+    pub fn try_publish_event(&self, event: Event) -> Result<(), RelayError> {
+        self.cmd_tx
+            .try_send(RelayCommand::PublishEvent {
+                event: Box::new(event),
+            })
             .map_err(|_| RelayError::ConnectionClosed)
     }
 
@@ -772,6 +787,7 @@ impl HarnessRelay {
         let (event_tx, event_rx) = mpsc::channel::<Option<BuzzEvent>>(event_channel_capacity());
         let (observer_control_tx, observer_control_rx) =
             mpsc::channel::<Event>(event_channel_capacity());
+        let (turn_claim_tx, turn_claim_rx) = mpsc::channel::<Event>(event_channel_capacity());
         let (cmd_tx, cmd_rx) = mpsc::channel::<RelayCommand>(CMD_CHANNEL_CAPACITY);
 
         let bg_keys = keys.clone();
@@ -785,6 +801,7 @@ impl HarnessRelay {
                 handshake_buffer,
                 event_tx,
                 observer_control_tx,
+                turn_claim_tx,
                 cmd_rx,
                 bg_keys,
                 bg_relay_url,
@@ -797,6 +814,7 @@ impl HarnessRelay {
         Ok(Self {
             event_rx,
             observer_control_rx: Some(observer_control_rx),
+            turn_claim_rx: Some(turn_claim_rx),
             cmd_tx,
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
@@ -947,6 +965,21 @@ impl HarnessRelay {
     /// Take the observer-control receiver for polling outside this relay object.
     pub fn take_observer_control_rx(&mut self) -> Option<mpsc::Receiver<Event>> {
         self.observer_control_rx.take()
+    }
+
+    /// Subscribe to turn claims (`KIND_TURN_CLAIM`) addressed to this agent.
+    /// Sibling bodies running the same key publish these before running a turn.
+    pub async fn subscribe_turn_claims(&mut self) -> Result<(), RelayError> {
+        self.cmd_tx
+            .send(RelayCommand::SubscribeTurnClaims)
+            .await
+            .map_err(|_| RelayError::ConnectionClosed)?;
+        Ok(())
+    }
+
+    /// Take the turn-claim receiver for polling outside this relay object.
+    pub fn take_turn_claim_rx(&mut self) -> Option<mpsc::Receiver<Event>> {
+        self.turn_claim_rx.take()
     }
 
     /// Return a cloneable publisher handle for signed relay events.
@@ -1155,6 +1188,8 @@ struct BgState {
     membership_sub_active: bool,
     /// Whether the observer control subscription is active.
     observer_control_sub_active: bool,
+    /// Whether the turn-claim subscription is wanted (restored on reconnect).
+    turn_claim_sub_active: bool,
     /// Oldest dropped channel-event timestamp per channel, keyed by channel_id.
     /// Mirrors `membership_dropped_since` but for ordinary channel events.
     /// On reconnect resubscribe, `since` = min(last_seen, channel_dropped_since).
@@ -1193,6 +1228,10 @@ struct BgState {
     /// subscription. The main-loop drain re-sends the REQ once the gate clears,
     /// even when `rate_limited_pending` is empty.
     observer_resub_needed: bool,
+    /// Turn-claim REQ was refused or rate-gated; re-send on the next drain.
+    turn_claim_resub_needed: bool,
+    /// Sender for turn claims delivered on `TURN_CLAIM_SUB_ID`.
+    turn_claim_tx: Option<mpsc::Sender<Event>>,
     /// Observer telemetry frames (kind 24200) parked while the rate-limit gate
     /// is armed. Unlike typing indicators, these frames are durable telemetry:
     /// dropping them silently loses turn history in the Desktop observer.
@@ -1234,6 +1273,7 @@ impl BgState {
             membership_last_seen: None,
             membership_sub_active: false,
             observer_control_sub_active: false,
+            turn_claim_sub_active: false,
             channel_dropped_since: HashMap::new(),
             recovery: recovery::RecoverySchedule::default(),
             startup_watermark: None,
@@ -1242,6 +1282,8 @@ impl BgState {
             rate_limited_pending: HashMap::new(),
             membership_resub_needed: false,
             observer_resub_needed: false,
+            turn_claim_resub_needed: false,
+            turn_claim_tx: None,
             gated_observer_pending: VecDeque::new(),
             observer_in_flight: VecDeque::new(),
             gated_observer_dropped: 0,
@@ -1473,6 +1515,9 @@ fn apply_command_to_state(state: &mut BgState, cmd: RelayCommand) {
         RelayCommand::SubscribeObserverControls => {
             state.observer_control_sub_active = true;
         }
+        RelayCommand::SubscribeTurnClaims => {
+            state.turn_claim_sub_active = true;
+        }
         RelayCommand::SetStartupWatermark { ts } => {
             state.startup_watermark = Some(ts);
             if state.membership_last_seen.is_none() {
@@ -1667,6 +1712,23 @@ async fn execute_connected_command(
                 false
             }
         }
+        RelayCommand::SubscribeTurnClaims => {
+            state.turn_claim_sub_active = true;
+            if state.check_rate_gate().is_some() {
+                debug!("rate-gated: deferring turn claim subscription");
+                state.turn_claim_resub_needed = true;
+                return true;
+            }
+            let sent = send_turn_claim_subscribe(ws, agent_pubkey_hex).await;
+            if sent {
+                state.turn_claim_resub_needed = false;
+                true
+            } else {
+                warn!("turn claim subscribe REQ failed — recording intent for reconnect");
+                state.turn_claim_resub_needed = true;
+                false
+            }
+        }
         RelayCommand::PublishEvent { event } => {
             // Observer telemetry frames (kind 24200) are durable telemetry, not
             // droppable ephemera: park them while the rate-limit gate is armed —
@@ -1738,6 +1800,7 @@ async fn run_background_task(
     initial_handshake_buffer: std::collections::VecDeque<RelayMessage>,
     event_tx: mpsc::Sender<Option<BuzzEvent>>,
     observer_control_tx: mpsc::Sender<Event>,
+    turn_claim_tx: mpsc::Sender<Event>,
     mut cmd_rx: mpsc::Receiver<RelayCommand>,
     keys: Keys,
     relay_url: String,
@@ -1745,6 +1808,7 @@ async fn run_background_task(
     auth_tag: Option<nostr::Tag>,
 ) {
     let mut state = BgState::new();
+    state.turn_claim_tx = Some(turn_claim_tx);
 
     let handshake_ok = process_handshake_buffer(
         &mut ws,
@@ -1865,6 +1929,15 @@ async fn run_background_task(
                         warn!(
                             "observer control resub after rate-limit failed — will retry next drain"
                         );
+                    }
+                }
+                if state.turn_claim_resub_needed && budget > 0 {
+                    if send_turn_claim_subscribe(&mut ws, &agent_pubkey_hex).await {
+                        state.turn_claim_resub_needed = false;
+                        budget = budget.saturating_sub(1);
+                        any_sent = true;
+                    } else {
+                        warn!("turn claim resub after rate-limit failed — will retry next drain");
                     }
                 }
             }
@@ -2226,7 +2299,24 @@ async fn handle_ws_message(
                         }
                     };
 
-                    if subscription_id == OBSERVER_CONTROL_SUB_ID {
+                    if subscription_id == TURN_CLAIM_SUB_ID {
+                        // Turn claims are advisory and time-boxed: a dropped
+                        // claim degrades to the plain claim window, so a full
+                        // or closed channel never costs the socket.
+                        if let Some(tx) = state.turn_claim_tx.as_ref() {
+                            match tx.try_send(*event) {
+                                Ok(()) => {}
+                                Err(mpsc::error::TrySendError::Full(_)) => {
+                                    warn!("turn claim dropped because the claim channel is full");
+                                }
+                                Err(mpsc::error::TrySendError::Closed(_)) => {
+                                    debug!(
+                                        "turn claim dropped: main loop is not listening for claims"
+                                    );
+                                }
+                            }
+                        }
+                    } else if subscription_id == OBSERVER_CONTROL_SUB_ID {
                         match observer_control_tx.try_send(*event) {
                             Ok(()) => {}
                             Err(mpsc::error::TrySendError::Full(_)) => {
@@ -2403,6 +2493,8 @@ async fn handle_ws_message(
                             state.membership_resub_needed = true;
                         } else if subscription_id == OBSERVER_CONTROL_SUB_ID {
                             state.observer_resub_needed = true;
+                        } else if subscription_id == TURN_CLAIM_SUB_ID {
+                            state.turn_claim_resub_needed = true;
                         }
                         return true; // keep the socket
                     }
@@ -2435,6 +2527,16 @@ async fn handle_ws_message(
                             state.observer_control_sub_active = true;
                         } else {
                             warn!("observer control resubscribe failed after CLOSED — triggering reconnect");
+                            return false;
+                        }
+                    } else if subscription_id == TURN_CLAIM_SUB_ID {
+                        let sent = send_turn_claim_subscribe(ws, agent_pubkey_hex).await;
+                        if sent {
+                            state.turn_claim_sub_active = true;
+                        } else {
+                            warn!(
+                                "turn claim resubscribe failed after CLOSED — triggering reconnect"
+                            );
                             return false;
                         }
                     } else if subscription_id == MEMBERSHIP_NOTIF_SUB_ID {
@@ -2777,6 +2879,23 @@ async fn resubscribe_after_reconnect(
         }
     }
 
+    if state.turn_claim_sub_active {
+        if state.check_rate_gate().is_some() {
+            debug!("rate-gated: parking turn claim resubscribe after reconnect");
+            state.turn_claim_resub_needed = true;
+        } else {
+            if !pacing_sleep(cmd_rx, &mut deferred_commands, REQ_PACING_INTERVAL).await {
+                return ResubscribeResult::Shutdown;
+            }
+            if !send_turn_claim_subscribe(ws, agent_pubkey_hex).await {
+                warn!("failed to resubscribe turn claims after reconnect");
+                retain_deferred_command_intent(state, &mut deferred_commands);
+                return ResubscribeResult::RetryConnection;
+            }
+            state.turn_claim_resub_needed = false;
+        }
+    }
+
     match drain_commands(ws, cmd_rx, &mut deferred_commands, state, agent_pubkey_hex).await {
         ReconnectOutcome::Ok => ResubscribeResult::Ok,
         ReconnectOutcome::Failed => ResubscribeResult::RetryConnection,
@@ -3013,7 +3132,8 @@ async fn drain_commands(
             }
             RelayCommand::Subscribe { .. }
             | RelayCommand::SubscribeMembership
-            | RelayCommand::SubscribeObserverControls => {
+            | RelayCommand::SubscribeObserverControls
+            | RelayCommand::SubscribeTurnClaims => {
                 // A gated subscription is only parked in state; pace only an
                 // actual live send attempt.
                 let pace_after = state.check_rate_gate().is_none();
@@ -3481,6 +3601,43 @@ async fn send_observer_control_subscribe(ws: &mut WsStream, agent_pubkey_hex: &s
         }
         Err(e) => {
             warn!("failed to serialize observer control REQ: {e}");
+            false
+        }
+    }
+}
+
+/// Send a NIP-01 REQ for turn claims published by sibling bodies of this agent
+/// key. Claims are self-addressed (`p` = our pubkey) and ephemeral, so this is
+/// the same global `#p` routing as observer control frames.
+async fn send_turn_claim_subscribe(ws: &mut WsStream, agent_pubkey_hex: &str) -> bool {
+    let req = json!([
+        "REQ",
+        TURN_CLAIM_SUB_ID,
+        {
+            "kinds": [KIND_TURN_CLAIM],
+            "#p": [agent_pubkey_hex],
+            "since": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        }
+    ]);
+
+    match serde_json::to_string(&req) {
+        Ok(text) => {
+            match ws_send_timeout(ws, Message::Text(text.into()), WS_SEND_TIMEOUT_SECS).await {
+                Ok(()) => {
+                    debug!("subscribed to turn claims");
+                    true
+                }
+                Err(e) => {
+                    warn!("failed to send turn claim REQ: {e}");
+                    false
+                }
+            }
+        }
+        Err(e) => {
+            warn!("failed to serialize turn claim REQ: {e}");
             false
         }
     }

@@ -47,6 +47,7 @@ async fn review_recurring_headroom_between_ticks_gets_an_attempt() {
     let (client, mut server) = test_ws_pair().await;
     let (tx, mut rx) = mpsc::channel(1);
     let (control_tx, _control_rx) = mpsc::channel(1);
+    let (claim_tx, _claim_rx) = mpsc::channel::<nostr::Event>(1);
     let (cmd_tx, cmd_rx) = mpsc::channel(8);
     let start = tokio::time::Instant::now();
     let task = tokio::spawn(run_background_task(
@@ -54,6 +55,7 @@ async fn review_recurring_headroom_between_ticks_gets_an_attempt() {
         VecDeque::new(),
         tx,
         control_tx,
+        claim_tx,
         cmd_rx,
         Keys::generate(),
         "ws://127.0.0.1:1".into(),
@@ -156,12 +158,14 @@ impl Owner {
         let (client, server) = test_ws_pair().await;
         let (tx, rx) = mpsc::channel(capacity);
         let (control_tx, _control_rx) = mpsc::channel(1);
+        let (claim_tx, _claim_rx) = mpsc::channel::<nostr::Event>(1);
         let (cmd, cmd_rx) = mpsc::channel(8);
         let task = tokio::spawn(run_background_task(
             client,
             VecDeque::new(),
             tx,
             control_tx,
+            claim_tx,
             cmd_rx,
             Keys::generate(),
             "ws://127.0.0.1:1".into(),

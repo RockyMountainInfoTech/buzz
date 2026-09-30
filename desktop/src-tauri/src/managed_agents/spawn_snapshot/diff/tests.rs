@@ -28,6 +28,7 @@ fn base() -> SpawnConfigSnapshot {
         idle_timeout_seconds: Some(600),
         max_turn_duration_seconds: Some(7200),
         parallelism: 1,
+        assigned_machine: None,
         effort_level: Some("high".into()),
         session_policy: "channel".into(),
     }

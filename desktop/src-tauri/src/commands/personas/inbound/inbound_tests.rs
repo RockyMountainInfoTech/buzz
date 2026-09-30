@@ -200,6 +200,7 @@ fn local_agent() -> ManagedAgentRecord {
         idle_timeout_seconds: None,
         max_turn_duration_seconds: None,
         parallelism: 8,
+        assigned_machine: None,
         system_prompt: Some("local prompt".to_string()),
         model: Some("local-model".to_string()),
         provider: Some("local-provider".to_string()),
@@ -903,6 +904,7 @@ fn inbound_managed_agent_content(
         provider: None,
         persona_source_version: None,
         parallelism: 1,
+        assigned_machine: None,
         respond_to: crate::managed_agents::RespondTo::OwnerOnly,
         respond_to_allowlist: vec![],
     }

@@ -31,6 +31,7 @@ fn minimal_record() -> ManagedAgentRecord {
         idle_timeout_seconds: Some(30),
         max_turn_duration_seconds: Some(600),
         parallelism: 2,
+        assigned_machine: None,
         system_prompt: Some("You are a test agent.".to_string()),
         model: Some("claude-opus-4".to_string()),
         provider: Some("anthropic".to_string()),

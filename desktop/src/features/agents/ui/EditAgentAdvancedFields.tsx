@@ -19,6 +19,7 @@ import {
   isBuzzAgentRuntime,
   BUZZ_AGENT_THINKING_EFFORT,
 } from "./buzzAgentConfig";
+import { EDIT_AGENT_ASSIGNED_MACHINE_HELP } from "../lib/agentHosting";
 import {
   EDIT_AGENT_PARALLELISM_HELP,
   parallelismCapHint,
@@ -48,6 +49,7 @@ export function EditAgentAdvancedFields({
   model,
   modelTuningRuntimeId,
   parallelism,
+  assignedMachine,
   provider,
   requiredEnvKeys,
   catalogStatus = "ready",
@@ -58,6 +60,7 @@ export function EditAgentAdvancedFields({
   onEnvVarsChange,
   onInheritHarnessChange,
   onParallelismChange,
+  onAssignedMachineChange,
   onAutoRestartChange,
   onSystemPromptChange,
 }: {
@@ -83,6 +86,8 @@ export function EditAgentAdvancedFields({
    */
   modelTuningRuntimeId: string;
   parallelism: string;
+  /** Machine this agent is assigned to run on (empty = every machine). */
+  assignedMachine: string;
   /** Active LLM provider id — forwarded to BuzzAgentModelTuningFields for effort filtering. */
   provider?: string;
   requiredEnvKeys: readonly string[];
@@ -110,6 +115,7 @@ export function EditAgentAdvancedFields({
   onEnvVarsChange: (value: EnvVarsValue) => void;
   onInheritHarnessChange: (value: boolean) => void;
   onParallelismChange: (value: string) => void;
+  onAssignedMachineChange: (value: string) => void;
   onAutoRestartChange: (value: boolean) => void;
   onSystemPromptChange: (value: string) => void;
 }) {
@@ -274,6 +280,41 @@ export function EditAgentAdvancedFields({
             {parallelismHint}
           </p>
         ) : null}
+      </div>
+
+      {/* Assigned machine */}
+      <div className="space-y-1.5">
+        <label
+          className="text-sm font-medium text-foreground"
+          htmlFor="edit-agent-assigned-machine"
+        >
+          Assigned machine
+        </label>
+        <div
+          className={cn(
+            "flex min-h-11 items-center px-3",
+            PERSONA_FIELD_SHELL_CLASS,
+          )}
+        >
+          <Input
+            autoCapitalize="off"
+            autoCorrect="off"
+            className={cn(
+              "h-8 px-0 py-0 leading-6",
+              PERSONA_FIELD_CONTROL_CLASS,
+            )}
+            disabled={disabled}
+            id="edit-agent-assigned-machine"
+            onChange={(event) => onAssignedMachineChange(event.target.value)}
+            placeholder="Every machine"
+            spellCheck={false}
+            type="text"
+            value={assignedMachine}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {EDIT_AGENT_ASSIGNED_MACHINE_HELP}
+        </p>
       </div>
 
       {/* Relay URL: intentionally no editor. The legacy per-record relay pin

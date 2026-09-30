@@ -70,6 +70,16 @@ pub struct GlobalAgentConfig {
     /// Preferred ACP runtime for definitions without an explicit runtime.
     #[serde(default)]
     pub preferred_runtime: Option<String>,
+
+    /// This install's machine name (agent body id). Defaults to the hostname
+    /// when unset. Never relay-synced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_name: Option<String>,
+
+    /// Machine newly created agents are assigned to when the create form does
+    /// not name one. `None` = new agents stay unassigned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_assigned_machine: Option<String>,
 }
 
 /// Validate a `GlobalAgentConfig` before persisting it.
@@ -119,6 +129,16 @@ pub fn validate_global_config(config: &GlobalAgentConfig) -> Result<(), String> 
     }
 
     // Validate the structured provider and model fields.
+    for (field, value) in [
+        ("machine_name", &config.machine_name),
+        ("default_assigned_machine", &config.default_assigned_machine),
+    ] {
+        if let Some(v) = value {
+            super::runner_body::validate_machine_name(v)
+                .map_err(|e| format!("global config `{field}`: {e}"))?;
+        }
+    }
+
     for (field, value) in [("provider", &config.provider), ("model", &config.model)] {
         if let Some(v) = value {
             // Reject interior NUL bytes — they truncate C-string env injection.
@@ -172,6 +192,10 @@ pub fn normalize_global_config_fields(config: &mut GlobalAgentConfig) {
             config.model = None;
         }
     }
+    config.machine_name =
+        super::runner_body::normalize_machine_name(config.machine_name.as_deref());
+    config.default_assigned_machine =
+        super::runner_body::normalize_machine_name(config.default_assigned_machine.as_deref());
 }
 
 fn global_config_path<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<std::path::PathBuf, String> {

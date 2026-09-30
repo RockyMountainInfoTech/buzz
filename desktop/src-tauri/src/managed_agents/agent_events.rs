@@ -51,6 +51,9 @@ pub struct ManagedAgentEventContent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persona_source_version: Option<String>,
     pub parallelism: u32,
+    /// Shared machine assignment (see `ManagedAgentRecord::assigned_machine`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned_machine: Option<String>,
     /// Inbound author gate mode (wire string).
     pub respond_to: RespondTo,
     /// Allowlisted author pubkeys when `respond_to == Allowlist`. These are
@@ -101,6 +104,7 @@ pub fn agent_event_content(record: &ManagedAgentRecord) -> ManagedAgentEventCont
             record.persona_source_version.clone()
         },
         parallelism: record.parallelism,
+        assigned_machine: record.assigned_machine.clone(),
         respond_to: record.respond_to,
         respond_to_allowlist: record.respond_to_allowlist.clone(),
     }
@@ -182,6 +186,7 @@ mod tests {
             idle_timeout_seconds: None,
             max_turn_duration_seconds: None,
             parallelism: 24,
+            assigned_machine: None,
             system_prompt: Some("You are a test agent.".to_string()),
             model: Some("claude-opus-4".to_string()),
             provider: Some("anthropic".to_string()),

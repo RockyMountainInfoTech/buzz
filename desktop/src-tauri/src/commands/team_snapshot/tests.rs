@@ -227,6 +227,7 @@ fn team_export_with_instance_and_memory_level_uses_supplied_entries() {
         idle_timeout_seconds: None,
         max_turn_duration_seconds: None,
         parallelism: crate::managed_agents::DEFAULT_AGENT_PARALLELISM,
+        assigned_machine: None,
         system_prompt: None,
         model: None,
         provider: None,

@@ -54,6 +54,7 @@ pub(super) fn fixture(
         idle_timeout_seconds: None,
         max_turn_duration_seconds: None,
         parallelism: 1,
+        assigned_machine: None,
         system_prompt: None,
         model: None,
         provider: None,

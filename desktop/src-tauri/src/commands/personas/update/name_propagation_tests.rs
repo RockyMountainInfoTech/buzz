@@ -23,6 +23,7 @@ fn agent(persona_id: &str, name: &str, display_name: Option<&str>) -> ManagedAge
         idle_timeout_seconds: None,
         max_turn_duration_seconds: None,
         parallelism: 1,
+        assigned_machine: None,
         system_prompt: None,
         model: None,
         provider: None,

@@ -326,6 +326,8 @@ export type ManagedAgent = {
   idleTimeoutSeconds: number | null;
   maxTurnDurationSeconds: number | null;
   parallelism: number;
+  /** Machine (body id) this agent is assigned to; null = runs everywhere. */
+  assignedMachine: string | null;
   sessionPolicy: AcpSessionPolicy;
   systemPrompt: string | null;
   avatarUrl: string | null;
@@ -412,6 +414,8 @@ export type CreateManagedAgentInput = {
   idleTimeoutSeconds?: number;
   maxTurnDurationSeconds?: number;
   parallelism?: number;
+  /** Machine this agent runs on; absent = the install default. */
+  assignedMachine?: string;
   systemPrompt?: string;
   avatarUrl?: string;
   model?: string;
@@ -688,6 +692,8 @@ export type UpdateManagedAgentInput = {
   /** Absent = don't touch. Present = replace the env_vars map entirely. */
   envVars?: Record<string, string>;
   parallelism?: number;
+  /** Machine this agent runs on; empty string clears the assignment. */
+  assignedMachine?: string;
   turnTimeoutSeconds?: number;
   relayUrl?: string;
   acpCommand?: string;
@@ -914,6 +920,10 @@ export type GlobalAgentConfig = {
   model: string | null;
   /** Preferred ACP runtime for agents without a persona-specific runtime. */
   preferred_runtime: string | null;
+  /** This install's machine name (agent body id); null = hostname. Local only. */
+  machine_name?: string | null;
+  /** Machine newly created agents are assigned to; null = unassigned. */
+  default_assigned_machine?: string | null;
 };
 
 /**
