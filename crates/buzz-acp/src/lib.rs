@@ -3839,18 +3839,7 @@ async fn run_harness(
                 {
                     break;
                 }
-                // The turn is over: it is no longer a stake in its scope. A
-                // finished turn that kept counting would let this body
-                // pre-claim and dispatch the next mention with no window, even
-                // when a better-ranked sibling is back and should win it.
-                if finished_turn.is_some() {
-                    claim_gate.reconcile_dispatched(|scope| {
-                        pool.task_map()
-                            .values()
-                            .any(|meta| meta.scope.as_ref() == Some(scope))
-                    });
-                }
-                if drain_ready_join_results(
+                let drained = drain_ready_join_results(
                     &mut pool,
                     &mut queue,
                     config,
@@ -3861,8 +3850,17 @@ async fn run_harness(
                     &respawn_tx,
                     &mut respawn_tasks,
                     observer.clone(),
-                ) == LoopAction::Exit
-                {
+                );
+                // The turn is over: it is no longer a stake in its scope. A
+                // finished turn that kept counting would let this body
+                // pre-claim and dispatch the next mention with no window, even
+                // when a better-ranked sibling is back and should win it. This
+                // runs after the drain so a panic whose join was already ready
+                // releases its stake here too, not only in the Panic arm.
+                if finished_turn.is_some() || drained.recovered_panics > 0 {
+                    release_finished_stakes(&mut claim_gate, &pool);
+                }
+                if drained.action == LoopAction::Exit {
                     break;
                 }
                 for (scope, thread_tags) in dispatch_pending(
@@ -3898,11 +3896,7 @@ async fn run_harness(
                 );
                 // A panicked turn is over too: drop its stake (see the Result arm).
                 if panicked_scope.is_some() {
-                    claim_gate.reconcile_dispatched(|scope| {
-                        pool.task_map()
-                            .values()
-                            .any(|meta| meta.scope.as_ref() == Some(scope))
-                    });
+                    release_finished_stakes(&mut claim_gate, &pool);
                 }
                 if pool.live_count() == 0 && !any_respawn_in_flight(&crash_history) {
                     tracing::error!("all agents dead — exiting");
@@ -5425,6 +5419,25 @@ fn recover_panicked_agent(
     });
 }
 
+/// Drop every turn-claim stake whose turn is no longer running. Shared by the
+/// Result arm (after the join drain) and the Panic arm so a dead turn can never
+/// keep authorizing window-free pre-claims for its scope.
+fn release_finished_stakes(claim_gate: &mut turn_claim::ClaimGate, pool: &AgentPool) {
+    claim_gate.reconcile_dispatched(|scope| {
+        pool.task_map()
+            .values()
+            .any(|meta| meta.scope.as_ref() == Some(scope))
+    });
+}
+
+/// Outcome of [`drain_ready_join_results`]: whether the loop should exit and
+/// how many panicked tasks were recovered (so the caller can release their
+/// turn-claim stakes).
+struct DrainOutcome {
+    action: LoopAction,
+    recovered_panics: usize,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn drain_ready_join_results(
     pool: &mut AgentPool,
@@ -5437,7 +5450,8 @@ fn drain_ready_join_results(
     respawn_tx: &mpsc::Sender<RespawnResult>,
     respawn_tasks: &mut tokio::task::JoinSet<()>,
     observer: Option<observer::ObserverHandle>,
-) -> LoopAction {
+) -> DrainOutcome {
+    let mut recovered_panics = 0;
     while let Some(Some(join_result)) = pool.join_set.join_next().now_or_never() {
         if let Err(join_error) = join_result {
             tracing::error!("agent task panicked: {join_error}");
@@ -5454,12 +5468,19 @@ fn drain_ready_join_results(
                 respawn_tasks,
                 observer.clone(),
             );
+            recovered_panics += 1;
             if pool.live_count() == 0 && !any_respawn_in_flight(crash_history) {
-                return LoopAction::Exit;
+                return DrainOutcome {
+                    action: LoopAction::Exit,
+                    recovered_panics,
+                };
             }
         }
     }
-    LoopAction::Continue
+    DrainOutcome {
+        action: LoopAction::Continue,
+        recovered_panics,
+    }
 }
 
 fn dispatch_heartbeat(
@@ -10170,6 +10191,96 @@ mod error_outcome_emission_tests {
             Some(channel_id.to_string().as_str())
         );
         assert_eq!(panic.turn_id.as_deref(), Some("panic-turn-id"));
+    }
+
+    /// A panic whose join is already ready when a sibling turn's Result is
+    /// handled is recovered by `drain_ready_join_results`, not the Panic arm.
+    /// The drain must report it so the Result arm releases the dead turn's
+    /// turn-claim stake; otherwise `holds_scope` stays true until the TTL
+    /// prune and this body keeps pre-claiming that scope with no window.
+    #[tokio::test]
+    async fn drained_panic_releases_its_turn_claim_stake() {
+        let mut pool = AgentPool::from_slots(vec![]);
+        let channel_id = Uuid::new_v4();
+        let scope = scope::SessionScope::Conversation { channel_id };
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let abort_handle = pool.join_set.spawn(async move {
+            let _ = started_tx.send(());
+            std::future::pending::<()>().await;
+        });
+        pool.task_map_mut().insert(
+            abort_handle.id(),
+            crate::pool::TaskMeta {
+                agent_index: 0,
+                channel_id: Some(channel_id),
+                scope: Some(scope.clone()),
+                turn_id: "drained-panic-turn".to_string(),
+                recoverable_batch: None,
+                control_tx: None,
+                steer_tx: None,
+                successful_steer_deliveries: HashSet::new(),
+            },
+        );
+        started_rx.await.unwrap();
+        abort_handle.abort();
+        // Let the aborted task settle so its join result is ready for the drain.
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+
+        let keys = Keys::generate();
+        let batch = FlushBatch {
+            channel_id,
+            scope: scope.clone(),
+            events: vec![BatchEvent {
+                event: EventBuilder::new(Kind::Custom(9), "drained panic")
+                    .sign_with_keys(&keys)
+                    .expect("sign"),
+                prompt_tag: "test".to_string(),
+                received_at: std::time::Instant::now(),
+            }],
+            cancelled_events: Vec::new(),
+            cancel_reason: None,
+        };
+        let mut claim_gate =
+            turn_claim::ClaimGate::new("body-a".to_string(), turn_claim::RunnerMode::Active, 750);
+        claim_gate.mark_dispatched(&batch, tokio::time::Instant::now());
+        assert!(claim_gate.holds_scope(&scope));
+
+        let mut queue = EventQueue::new(config::DedupMode::Queue);
+        let config = test_config();
+        let mut heartbeat_in_flight = false;
+        let removed_channels = HashSet::new();
+        let mut typing_channels = HashMap::new();
+        let mut crash_history = vec![SlotCircuit {
+            crash_times: Vec::new(),
+            open_until: None,
+            respawn_in_flight: false,
+        }];
+        let (respawn_tx, _respawn_rx) = mpsc::channel(8);
+        let mut respawn_tasks = tokio::task::JoinSet::new();
+        let observer = ObserverHandle::in_process();
+
+        let drained = drain_ready_join_results(
+            &mut pool,
+            &mut queue,
+            &config,
+            &mut heartbeat_in_flight,
+            &removed_channels,
+            &mut typing_channels,
+            &mut crash_history,
+            &respawn_tx,
+            &mut respawn_tasks,
+            Some(observer),
+        );
+        assert_eq!(drained.recovered_panics, 1);
+        assert!(pool.task_map().is_empty());
+
+        // The stake survives the drain itself (bookkeeping is the caller's)...
+        assert!(claim_gate.holds_scope(&scope));
+        // ...and the Result arm's release drops it because no task is live.
+        release_finished_stakes(&mut claim_gate, &pool);
+        assert!(!claim_gate.holds_scope(&scope));
     }
 
     // Fix #3: a panicked thread-scoped task must clear its EXACT scope from the
