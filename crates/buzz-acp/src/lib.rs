@@ -3855,6 +3855,7 @@ async fn run_harness(
                 if let Some(scope) = result.source.scope() {
                     typing_channels.remove(scope);
                 }
+                let finished_turn = result.source.scope().cloned();
                 if handle_prompt_result(
                     &mut pool,
                     &mut queue,
@@ -3870,6 +3871,17 @@ async fn run_harness(
                 ) == LoopAction::Exit
                 {
                     break;
+                }
+                // The turn is over: it is no longer a stake in its scope. A
+                // finished turn that kept counting would let this body
+                // pre-claim and dispatch the next mention with no window, even
+                // when a better-ranked sibling is back and should win it.
+                if finished_turn.is_some() {
+                    claim_gate.reconcile_dispatched(|scope| {
+                        pool.task_map()
+                            .values()
+                            .any(|meta| meta.scope.as_ref() == Some(scope))
+                    });
                 }
                 if drain_ready_join_results(
                     &mut pool,
@@ -3900,6 +3912,10 @@ async fn run_harness(
             }
             Some(PoolEvent::Panic(join_error)) => {
                 tracing::error!("agent task panicked: {join_error}");
+                let panicked_scope = pool
+                    .task_map()
+                    .get(&join_error.id())
+                    .and_then(|meta| meta.scope.clone());
                 recover_panicked_agent(
                     &mut pool,
                     &mut queue,
@@ -3913,6 +3929,14 @@ async fn run_harness(
                     &mut respawn_tasks,
                     observer.clone(),
                 );
+                // A panicked turn is over too: drop its stake (see the Result arm).
+                if panicked_scope.is_some() {
+                    claim_gate.reconcile_dispatched(|scope| {
+                        pool.task_map()
+                            .values()
+                            .any(|meta| meta.scope.as_ref() == Some(scope))
+                    });
+                }
                 if pool.live_count() == 0 && !any_respawn_in_flight(&crash_history) {
                     tracing::error!("all agents dead — exiting");
                     break;
