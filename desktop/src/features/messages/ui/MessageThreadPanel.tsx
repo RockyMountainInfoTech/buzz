@@ -120,6 +120,7 @@ type MessageThreadPanelProps = ThreadPanelLayoutProps & {
   threadUnreadCount?: number;
   threadReplyUnreadCounts?: ReadonlyMap<string, number>;
   threadTypingPubkeys: string[];
+  threadTypingBodies?: readonly (string | null)[];
   videoReviewPresentation?: VideoReviewPresentation;
   activityAccessoryContent?: React.ReactNode;
   activityAccessoryVisible: boolean;
@@ -201,6 +202,7 @@ export function MessageThreadPanel({
   threadUnreadCount,
   threadReplyUnreadCounts,
   threadTypingPubkeys,
+  threadTypingBodies,
   activityAccessoryContent,
   activityAccessoryVisible,
   canResetWidth,
@@ -886,6 +888,7 @@ export function MessageThreadPanel({
                     className="min-w-0 flex-1 py-0 pl-[calc(0.75rem+1px)] pr-0 sm:pl-[calc(1rem+1px)]"
                     currentPubkey={currentPubkey}
                     profiles={profiles}
+                    typingBodies={threadTypingBodies}
                     typingPubkeys={threadTypingPubkeys}
                     variant="activity"
                   />

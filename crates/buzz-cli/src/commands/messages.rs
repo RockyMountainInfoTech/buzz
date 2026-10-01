@@ -12,6 +12,58 @@ use buzz_sdk::mentions::{
     extract_at_mentions_with_known, extract_nostr_uris, strip_code_regions, MENTION_CAP,
 };
 
+/// `["body", name]` when `BUZZ_BODY_ID` is a publishable machine name.
+///
+/// Empty, whitespace, control characters, and over-long values add no tag.
+/// The tag is display-only; nothing authorizes on it.
+pub(crate) fn message_body_tag(raw: Option<&str>) -> Option<nostr::Tag> {
+    let label = raw.and_then(buzz_core::body_label::publishable)?;
+    nostr::Tag::parse(["body", label.as_str()]).ok()
+}
+
+fn with_message_body_tag(builder: nostr::EventBuilder, raw: Option<&str>) -> nostr::EventBuilder {
+    match message_body_tag(raw) {
+        Some(tag) => builder.tag(tag),
+        None => builder,
+    }
+}
+
+#[cfg(test)]
+mod message_body_tag_tests {
+    use super::message_body_tag;
+    use nostr::{EventBuilder, Keys, Kind};
+
+    fn body_values(raw: Option<&str>) -> Vec<String> {
+        let mut builder = EventBuilder::new(Kind::Custom(9), "hi");
+        if let Some(tag) = message_body_tag(raw) {
+            builder = builder.tag(tag);
+        }
+        let event = builder.sign_with_keys(&Keys::generate()).unwrap();
+        let json = serde_json::to_value(&event).unwrap();
+        json["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|tag| tag[0] == "body")
+            .map(|tag| tag[1].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn body_tag_follows_the_publishable_name_rules() {
+        assert_eq!(
+            body_values(Some("  MacMiniM4  ")),
+            vec!["MacMiniM4".to_string()]
+        );
+        assert!(body_values(None).is_empty());
+        assert!(body_values(Some("")).is_empty());
+        assert!(body_values(Some("   ")).is_empty());
+        assert!(body_values(Some("bad\nname")).is_empty());
+        assert!(body_values(Some(&"x".repeat(65))).is_empty());
+        assert_eq!(body_values(Some(&"x".repeat(64))), vec!["x".repeat(64)]);
+    }
+}
+
 /// Extract the thread root event ID from a Nostr tag array.
 ///
 /// Delegates marker parsing and collapse to [`buzz_core::nip10`] (shared with
@@ -741,6 +793,7 @@ pub async fn cmd_send_message(
             )))
         }
     };
+    let builder = with_message_body_tag(builder, std::env::var("BUZZ_BODY_ID").ok().as_deref());
 
     let event = client.sign_event(builder)?;
     let emitted_mentions = event_mention_pubkeys(&event);

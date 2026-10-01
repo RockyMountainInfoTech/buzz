@@ -11,6 +11,7 @@ import {
   canSendMessageToChannel,
 } from "@/features/messages/lib/canSendToChannel";
 import type { TimelineMessage } from "@/features/messages/types";
+import { sentFromLabel } from "@/features/messages/lib/runnerBodyLabel";
 import { useKnownAgentPubkeys } from "@/features/agents/useKnownAgentPubkeys";
 import { HuddleAttachment } from "@/features/huddle/components/HuddleAttachment";
 import { MessageReactions } from "@/features/messages/ui/MessageReactions";
@@ -528,6 +529,7 @@ export const MessageRow = React.memo(
           className="opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100"
           createdAt={message.createdAt}
           hideDayPeriod
+          sentFrom={sentFromLabel(message.tags)}
         />
       </div>
     );
@@ -633,7 +635,10 @@ export const MessageRow = React.memo(
 
     const inlineMetadataNode = (
       <div className="flex shrink-0 items-baseline gap-2 text-xs">
-        <MessageTimestamp createdAt={message.createdAt} />
+        <MessageTimestamp
+          createdAt={message.createdAt}
+          sentFrom={sentFromLabel(message.tags)}
+        />
         {statusMetadataNode}
       </div>
     );

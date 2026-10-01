@@ -7,6 +7,7 @@ import type {
   TimelineMessage,
   TimelineReaction,
 } from "@/features/messages/types";
+import { sentFromLabel } from "@/features/messages/lib/runnerBodyLabel";
 import { MessageReactions } from "@/features/messages/ui/MessageReactions";
 import { useReactionHandler } from "@/features/messages/ui/useReactionHandler";
 import { recordQuickReactionEmoji } from "@/features/messages/ui/useQuickReactionEmojis";
@@ -938,11 +939,17 @@ export const SystemMessageRow = React.memo(function SystemMessageRow({
                   {/* Grouped with the timestamp so the two wrap together. */}
                   <span className="inline-flex min-w-0 items-baseline gap-x-1.5">
                     <MessageMetaSeparator />
-                    <MessageTimestamp createdAt={message.createdAt} />
+                    <MessageTimestamp
+                      createdAt={message.createdAt}
+                      sentFrom={sentFromLabel(message.tags)}
+                    />
                   </span>
                 </>
               ) : (
-                <MessageTimestamp createdAt={message.createdAt} />
+                <MessageTimestamp
+                  createdAt={message.createdAt}
+                  sentFrom={sentFromLabel(message.tags)}
+                />
               )}
             </MessageHeaderRow>
             <p className="-mt-0.5 text-sm leading-snug text-foreground">

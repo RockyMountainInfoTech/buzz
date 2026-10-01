@@ -1155,6 +1155,7 @@ fn batch_envelope(events: &[observer::ObserverEvent]) -> observer::ObserverEvent
         session_id: last.session_id.clone(),
         turn_id: last.turn_id.clone(),
         started_at: last.started_at.clone(),
+        body_id: last.body_id.clone(),
         payload: serde_json::json!({
             "events": serde_json::to_value(events).unwrap_or_default(),
         }),
@@ -2643,6 +2644,8 @@ async fn run_harness(
         .relay_observer
         .then(observer::ObserverHandle::in_process);
     if let Some(handle) = &observer {
+        // Owner frames always carry the body id, including the hostname fallback.
+        handle.set_body_id(config.body_id.clone());
         handle.emit(
             "harness_started",
             None,
@@ -3788,6 +3791,7 @@ async fn run_harness(
                             ch,
                             thread_tags.root_event_id.as_deref(),
                             thread_tags.parent_event_id.as_deref(),
+                            config.published_body_label().as_deref(),
                         ) {
                             if let Err(e) = relay.try_publish_event(event) {
                                 tracing::debug!("typing indicator dropped for {ch}: {e}");
@@ -4191,6 +4195,7 @@ async fn run_harness(
                             tracing::info!(
                                 channel = %batch.channel_id,
                                 scope = %batch.scope.telemetry_label(),
+                                body = %claim_gate.body_id(),
                                 winner = %winner,
                                 events = ids.len(),
                                 "turn claim lost — standing down, sibling body answers"
@@ -4955,6 +4960,7 @@ fn dispatch_pending(
                 tracing::info!(
                     channel = %batch.channel_id,
                     scope = %batch.scope.telemetry_label(),
+                    body = %claim_body,
                     winner = %winner,
                     events = ids.len(),
                     "turn claim yielded — sibling body already holds these events"
@@ -5089,6 +5095,13 @@ fn dispatch_pending(
         // cleared but no worker took (hold, pool exhausted) was handed back
         // above and must never look cancellable.
         claims.mark_dispatched(&batch, now);
+        tracing::info!(
+            channel = %channel_id,
+            scope = %scope.telemetry_label(),
+            body = %claims.body_id(),
+            winner = %claims.body_id(),
+            "turn claim won"
+        );
 
         let result_tx = pool.result_tx();
         let ctx_clone = Arc::clone(ctx);
@@ -8809,6 +8822,7 @@ mod observer_publish_queue_tests {
             session_id: Some("session-1".to_string()),
             turn_id: Some("turn-1".to_string()),
             started_at: None,
+            body_id: None,
             payload: serde_json::json!({ "seq": seq }),
         }
     }
@@ -9677,6 +9691,7 @@ mod observer_chunk_coalescer_tests {
             session_id: Some("session-1".to_string()),
             turn_id: Some("turn-1".to_string()),
             started_at: None,
+            body_id: None,
             payload: serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "session/update",
@@ -9705,6 +9720,7 @@ mod observer_chunk_coalescer_tests {
             session_id: Some("session-1".to_string()),
             turn_id: Some("turn-1".to_string()),
             started_at: None,
+            body_id: None,
             payload: serde_json::json!({ "type": "turn_started" }),
         }
     }
@@ -9791,6 +9807,7 @@ mod build_mcp_servers_tests {
             multiple_event_handling: config::MultipleEventHandling::Queue,
             ignore_self: true,
             body_id: "test-body".to_string(),
+            publish_body: false,
             runner_mode: turn_claim::RunnerMode::Active,
             claim_window_ms: 0,
             kinds_override: None,
@@ -10820,6 +10837,7 @@ mod error_outcome_emission_tests {
             multiple_event_handling: config::MultipleEventHandling::Queue,
             ignore_self: true,
             body_id: "test-body".to_string(),
+            publish_body: false,
             runner_mode: turn_claim::RunnerMode::Active,
             claim_window_ms: 0,
             kinds_override: None,
@@ -12945,6 +12963,7 @@ mod observer_payload_trim_tests {
             session_id: Some("sess-1".to_string()),
             turn_id: Some("turn-1".to_string()),
             started_at: None,
+            body_id: None,
             payload,
         }
     }

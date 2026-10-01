@@ -20,6 +20,7 @@ type ChannelComposerActivityAccessoryProps = {
   typingPubkeys: string[];
   visible: boolean;
   workingBotPubkeys: string[];
+  runningFrom?: string | null;
 };
 
 export function ChannelComposerActivityAccessory({
@@ -32,6 +33,7 @@ export function ChannelComposerActivityAccessory({
   typingPubkeys,
   visible,
   workingBotPubkeys,
+  runningFrom = null,
 }: ChannelComposerActivityAccessoryProps) {
   const cardMintJobs = useCardMintJobs();
   return (
@@ -50,6 +52,7 @@ export function ChannelComposerActivityAccessory({
               onOpenAgentSession={onOpenAgentSession}
               openAgentSessionPubkey={openAgentSessionPubkey}
               profiles={profiles}
+              runningFrom={runningFrom}
               workingBotPubkeys={workingBotPubkeys}
               variant="inline"
             />

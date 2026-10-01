@@ -1040,24 +1040,9 @@ impl HarnessRelay {
         channel_id: Uuid,
         root_event_id: Option<&str>,
         parent_event_id: Option<&str>,
+        body: Option<&str>,
     ) -> Result<Event, RelayError> {
-        let h_tag = Tag::parse(["h", &channel_id.to_string()])
-            .map_err(|e| RelayError::AuthFailed(e.to_string()))?;
-        let mut tags = vec![h_tag];
-        if let Some(parent) = parent_event_id {
-            if let Some(root) = root_event_id {
-                if root != parent {
-                    tags.push(
-                        Tag::parse(["e", root, "", "root"])
-                            .map_err(|e| RelayError::AuthFailed(e.to_string()))?,
-                    );
-                }
-            }
-            tags.push(
-                Tag::parse(["e", parent, "", "reply"])
-                    .map_err(|e| RelayError::AuthFailed(e.to_string()))?,
-            );
-        }
+        let tags = typing_indicator_tags(channel_id, root_event_id, parent_event_id, body)?;
         let event = EventBuilder::new(Kind::Custom(KIND_TYPING_INDICATOR as u16), "")
             .tags(tags)
             .sign_with_keys(&self.keys)?;
@@ -4330,6 +4315,39 @@ async fn wait_for_any_ok(
     }
 }
 
+/// Tags for a kind 20002 typing indicator.
+///
+/// `body` is display-only. It is omitted on the hostname fallback (`None`)
+/// and when the name fails the shared machine-name rules.
+pub(crate) fn typing_indicator_tags(
+    channel_id: Uuid,
+    root_event_id: Option<&str>,
+    parent_event_id: Option<&str>,
+    body: Option<&str>,
+) -> Result<Vec<Tag>, RelayError> {
+    let h_tag = Tag::parse(["h", &channel_id.to_string()])
+        .map_err(|e| RelayError::AuthFailed(e.to_string()))?;
+    let mut tags = vec![h_tag];
+    if let Some(parent) = parent_event_id {
+        if let Some(root) = root_event_id {
+            if root != parent {
+                tags.push(
+                    Tag::parse(["e", root, "", "root"])
+                        .map_err(|e| RelayError::AuthFailed(e.to_string()))?,
+                );
+            }
+        }
+        tags.push(
+            Tag::parse(["e", parent, "", "reply"])
+                .map_err(|e| RelayError::AuthFailed(e.to_string()))?,
+        );
+    }
+    if let Some(label) = body.and_then(buzz_core::body_label::publishable) {
+        tags.push(Tag::parse(["body", &label]).map_err(|e| RelayError::AuthFailed(e.to_string()))?);
+    }
+    Ok(tags)
+}
+
 mod recovery;
 
 #[cfg(test)]
@@ -4338,6 +4356,49 @@ mod recovery_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tag_rows(tags: &[nostr::Tag]) -> Vec<Vec<String>> {
+        serde_json::to_value(tags)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tag| {
+                tag.as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|part| part.as_str().unwrap().to_string())
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn typing_indicator_carries_body_only_for_a_publishable_name() {
+        let channel = Uuid::nil();
+        let published =
+            super::typing_indicator_tags(channel, None, None, Some("  MacMiniM5Pro  ")).unwrap();
+        assert_eq!(
+            tag_rows(&published),
+            vec![
+                vec!["h".to_string(), channel.to_string()],
+                vec!["body".to_string(), "MacMiniM5Pro".to_string()],
+            ]
+        );
+
+        let fallback = super::typing_indicator_tags(channel, None, None, None).unwrap();
+        assert_eq!(
+            tag_rows(&fallback),
+            vec![vec!["h".to_string(), channel.to_string()]]
+        );
+
+        let malformed =
+            super::typing_indicator_tags(channel, None, None, Some("bad\nname")).unwrap();
+        assert_eq!(
+            tag_rows(&malformed),
+            vec![vec!["h".to_string(), channel.to_string()]]
+        );
+    }
 
     async fn nip11_test_client(
         responses: HashMap<String, (u16, String)>,

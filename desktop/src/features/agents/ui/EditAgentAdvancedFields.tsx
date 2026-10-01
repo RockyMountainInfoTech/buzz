@@ -20,6 +20,10 @@ import {
   BUZZ_AGENT_THINKING_EFFORT,
 } from "./buzzAgentConfig";
 import { EDIT_AGENT_ASSIGNED_MACHINE_HELP } from "../lib/agentHosting";
+import { MachineNamePicker } from "./MachineNamePicker";
+import { useManagedAgentsQuery } from "../hooks";
+import { useGlobalAgentConfig } from "../useGlobalAgentConfig";
+import { publishableMachineName } from "@/features/messages/lib/runnerBodyLabel";
 import {
   EDIT_AGENT_PARALLELISM_HELP,
   parallelismCapHint,
@@ -150,6 +154,14 @@ export function EditAgentAdvancedFields({
   // Harness cap hint: show only when the selected runtime has a cap and the
   // current parallelism value exceeds it. Cap and label come from the catalog
   // entry — no hardcoded constant in TS.
+  const { globalConfig } = useGlobalAgentConfig();
+  const managedAgentsQuery = useManagedAgentsQuery();
+  const thisMachine =
+    publishableMachineName(globalConfig.machine_name) ??
+    publishableMachineName(globalConfig.local_body_id);
+  const knownMachines = (managedAgentsQuery.data ?? []).map(
+    (agent) => agent.assignedMachine,
+  );
   const parallelismHint = React.useMemo(() => {
     if (selectedRuntime?.maxParallelism === undefined || parallelism === "") {
       return null;
@@ -296,19 +308,16 @@ export function EditAgentAdvancedFields({
             PERSONA_FIELD_SHELL_CLASS,
           )}
         >
-          <Input
-            autoCapitalize="off"
-            autoCorrect="off"
+          <MachineNamePicker
             className={cn(
-              "h-8 px-0 py-0 leading-6",
+              "h-8 border-0 bg-transparent px-0 shadow-none",
               PERSONA_FIELD_CONTROL_CLASS,
             )}
             disabled={disabled}
             id="edit-agent-assigned-machine"
-            onChange={(event) => onAssignedMachineChange(event.target.value)}
-            placeholder="Every machine"
-            spellCheck={false}
-            type="text"
+            knownMachines={knownMachines}
+            onValueChange={onAssignedMachineChange}
+            thisMachine={thisMachine}
             value={assignedMachine}
           />
         </div>

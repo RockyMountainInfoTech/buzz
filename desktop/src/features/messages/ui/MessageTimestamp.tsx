@@ -40,10 +40,13 @@ export function MessageTimestamp({
   className,
   createdAt,
   hideDayPeriod = false,
+  sentFrom = null,
 }: {
   className?: string;
   createdAt: number;
   hideDayPeriod?: boolean;
+  /** "Sent from <machine>" when the message carries a publishable body tag. */
+  sentFrom?: string | null;
 }) {
   const displayTime = hideDayPeriod
     ? formatTimeWithoutDayPeriod(formatTime(createdAt))
@@ -67,7 +70,9 @@ export function MessageTimestamp({
           </p>
         </TooltipTrigger>
         <TooltipContent side="top">
-          {formatFullDateTime(createdAt)}
+          {sentFrom
+            ? `${formatFullDateTime(createdAt)} · ${sentFrom}`
+            : formatFullDateTime(createdAt)}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

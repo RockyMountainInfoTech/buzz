@@ -40,6 +40,9 @@ struct ObserverInner {
     tx: broadcast::Sender<ObserverEvent>,
     buffer: Mutex<VecDeque<ObserverEvent>>,
     seq: AtomicU64,
+    /// Owner-only machine id. Set for the hostname fallback too. Member-visible
+    /// tags use a separate publish flag and never read this field.
+    body_id: Mutex<Option<String>>,
 }
 
 fn new_observer_handle() -> ObserverHandle {
@@ -49,6 +52,7 @@ fn new_observer_handle() -> ObserverHandle {
             tx,
             buffer: Mutex::new(VecDeque::with_capacity(OBSERVER_BUFFER_CAP)),
             seq: AtomicU64::new(1),
+            body_id: Mutex::new(None),
         }),
     }
 }
@@ -74,6 +78,9 @@ pub struct ObserverEvent {
     /// RFC3339 timestamp at which the current turn began, when known.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub started_at: Option<String>,
+    /// Machine running this harness. Owner frames only; omitted when unset.
+    #[serde(rename = "bodyId", skip_serializing_if = "Option::is_none")]
+    pub body_id: Option<String>,
     /// Raw or semantic event payload.
     pub payload: serde_json::Value,
 }
@@ -82,6 +89,34 @@ impl ObserverHandle {
     /// Create an in-process observer feed.
     pub fn in_process() -> Self {
         new_observer_handle()
+    }
+
+    /// Record the harness body id stamped onto later owner frames.
+    ///
+    /// Empty clears it. This is not the member-visible publish decision.
+    pub fn set_body_id(&self, body_id: impl Into<String>) {
+        let body_id = body_id.into();
+        let stored = if body_id.is_empty() {
+            None
+        } else {
+            Some(body_id)
+        };
+        match self.inner.body_id.lock() {
+            Ok(mut slot) => *slot = stored,
+            Err(error) => {
+                tracing::warn!(target: "observer", "observer body id lock poisoned: {error}");
+            }
+        }
+    }
+
+    fn current_body_id(&self) -> Option<String> {
+        match self.inner.body_id.lock() {
+            Ok(slot) => slot.clone(),
+            Err(error) => {
+                tracing::warn!(target: "observer", "observer body id lock poisoned: {error}");
+                None
+            }
+        }
     }
 
     /// Subscribe to live observer events.
@@ -117,6 +152,7 @@ impl ObserverHandle {
             session_id: context.session_id.clone(),
             turn_id: context.turn_id.clone(),
             started_at: context.started_at.clone(),
+            body_id: self.current_body_id(),
             payload,
         };
 
@@ -162,5 +198,33 @@ pub fn context_for_turn(
         session_id,
         turn_id: Some(turn_id),
         started_at: Some(started_at),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ObserverHandle;
+
+    #[test]
+    fn body_id_is_stamped_on_owner_frames_and_omitted_when_unset() {
+        let observer = ObserverHandle::in_process();
+        observer.emit(
+            "turn_started",
+            None,
+            &super::ObserverContext::default(),
+            serde_json::json!({}),
+        );
+        let bare = serde_json::to_value(&observer.snapshot()[0]).unwrap();
+        assert!(bare.get("bodyId").is_none());
+
+        observer.set_body_id("MacMiniM5Pro");
+        observer.emit(
+            "turn_started",
+            None,
+            &super::ObserverContext::default(),
+            serde_json::json!({}),
+        );
+        let stamped = serde_json::to_value(observer.snapshot().last().unwrap()).unwrap();
+        assert_eq!(stamped["bodyId"], "MacMiniM5Pro");
     }
 }

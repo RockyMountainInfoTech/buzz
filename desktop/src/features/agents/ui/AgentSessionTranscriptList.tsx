@@ -794,6 +794,7 @@ function TurnSetupFooter({
   const label = formatTurnSetupLabel(items);
   const detail = turnSetupDetail(items);
   const tooltipText = [label, detail].filter(Boolean).join(" · ");
+  const runningFrom = label.match(/Running from: [^·]+/)?.[0] ?? null;
   const showSetup = items.length > 0;
   const showContext = hasContext && onContextOpenChange != null;
 
@@ -827,6 +828,14 @@ function TurnSetupFooter({
           <span className="sr-only">{tooltipText}</span>
         </span>
       )}
+      {runningFrom ? (
+        <span
+          className="min-w-0 truncate text-2xs"
+          data-testid="transcript-running-from"
+        >
+          {runningFrom}
+        </span>
+      ) : null}
       {showTimestamp ? (
         <TranscriptTimestamp messageLink={messageLink} timestamp={timestamp} />
       ) : null}

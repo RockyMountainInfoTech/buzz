@@ -7,6 +7,7 @@ import {
   isMeaningfulItem,
   isSpineItem,
 } from "@/features/agents/ui/agentSessionTranscriptPresentation";
+import { publishableMachineName } from "@/features/messages/lib/runnerBodyLabel";
 import type { UserProfileLookup } from "@/features/profile/lib/identity";
 import type { ManagedAgent } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
@@ -28,6 +29,8 @@ type BotActivityBarProps = {
   openAgentSessionPubkey: string | null;
   profiles?: UserProfileLookup;
   workingBotPubkeys: string[];
+  /** Publishable machine name for the single working agent, when known. */
+  runningFrom?: string | null;
   variant?: "toolbar" | "inline";
 };
 
@@ -41,6 +44,7 @@ export function BotActivityComposerAction({
   openAgentSessionPubkey,
   profiles,
   workingBotPubkeys,
+  runningFrom = null,
   variant = "toolbar",
 }: BotActivityBarProps) {
   const [open, setOpen] = React.useState(false);
@@ -147,13 +151,18 @@ export function BotActivityComposerAction({
   const agentAvatarUrl = (agent: BotActivityAgent) =>
     profiles?.[agent.pubkey.toLowerCase()]?.avatarUrl ?? null;
   const selectedPubkey = openAgentSessionPubkey?.toLowerCase() ?? null;
+  const machine =
+    workingAgents.length === 1 ? publishableMachineName(runningFrom) : null;
   const triggerLabel =
     workingAgents.length === 1
-      ? `${workingAgents[0]?.name ?? "Agent"} is working`
+      ? machine
+        ? `${workingAgents[0]?.name ?? "Agent"} is working · ${machine}`
+        : `${workingAgents[0]?.name ?? "Agent"} is working`
       : `${workingAgents.length} agents working`;
   const isInline = variant === "inline";
-  const visibleStatusLabel =
-    workingAgents.length === 1
+  const visibleStatusLabel = machine
+    ? `${workingAgents[0]?.name ?? "Agent"} is working · ${machine}`
+    : workingAgents.length === 1
       ? `${workingAgents[0]?.name ?? "Agent"}: ${
           activityHeadlines[headlineIndex % activityHeadlines.length] ??
           "Working"
@@ -172,6 +181,7 @@ export function BotActivityComposerAction({
               : "h-9 min-w-9 gap-1.5 px-2 text-xs",
           )}
           data-testid="bot-activity-composer-trigger"
+          title={machine ? `Running from ${machine}` : undefined}
           onBlur={closeWithDelay}
           onClick={() => {
             clearHoverTimer();

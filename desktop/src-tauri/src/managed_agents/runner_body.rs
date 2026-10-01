@@ -15,6 +15,10 @@ use super::{GlobalAgentConfig, ManagedAgentRecord};
 pub const BODY_ID_ENV: &str = "BUZZ_ACP_BODY_ID";
 /// Env var carrying the body role (`active` | `standby`) to the harness.
 pub const RUNNER_MODE_ENV: &str = "BUZZ_ACP_RUNNER_MODE";
+/// When `true`, the harness may put this body's name on member-visible
+/// events and export it to the agent as `BUZZ_BODY_ID`. Set only for an
+/// explicit Agent hosting name; the hostname fallback publishes nothing.
+pub const PUBLISH_BODY_ENV: &str = "BUZZ_ACP_PUBLISH_BODY";
 /// Upper bound on a machine name; long enough for any hostname, short enough
 /// to keep claim events and logs readable.
 pub const MAX_MACHINE_NAME_LEN: usize = 64;
@@ -76,15 +80,33 @@ pub fn runner_mode_for(record: &ManagedAgentRecord, body_id: &str) -> &'static s
     }
 }
 
-/// Would the runner-body env (`BUZZ_ACP_BODY_ID`, `BUZZ_ACP_RUNNER_MODE`)
-/// differ for `record` between a body id of `old_body` and `new_body`?
+/// True when Agent hosting has an explicit machine name safe to publish.
 ///
-/// Both keys are baked into the harness environment at spawn and are not part
-/// of `EffectiveAgentEnv`, so the global-config restart diff must consult this
-/// separately or a machine rename leaves running harnesses claiming turns
-/// under the old body id.
-pub fn runner_body_changed(record: &ManagedAgentRecord, old_body: &str, new_body: &str) -> bool {
-    old_body != new_body || runner_mode_for(record, old_body) != runner_mode_for(record, new_body)
+/// The hostname fallback still claims and logs under `local_body_id`, and it
+/// does not publish. A name equal to the hostname is explicit: the body id
+/// string is unchanged, but the publish flag flips.
+pub fn publishes_explicit_body(global: &GlobalAgentConfig) -> bool {
+    normalize_machine_name(global.machine_name.as_deref())
+        .is_some_and(|name| validate_machine_name(&name).is_ok())
+}
+
+/// Would the runner-body spawn env differ for `record`?
+///
+/// `BUZZ_ACP_BODY_ID`, `BUZZ_ACP_RUNNER_MODE`, and `BUZZ_ACP_PUBLISH_BODY` are
+/// baked in at spawn and are not part of `EffectiveAgentEnv`. A save that
+/// sets or clears a name equal to the hostname leaves the body id string
+/// unchanged (`local_body_id` falls back to that hostname) and still flips
+/// the publish flag, so both directions must restart running agents.
+pub fn runner_body_changed(
+    record: &ManagedAgentRecord,
+    old_body: &str,
+    new_body: &str,
+    old_publish: bool,
+    new_publish: bool,
+) -> bool {
+    old_body != new_body
+        || runner_mode_for(record, old_body) != runner_mode_for(record, new_body)
+        || old_publish != new_publish
 }
 
 /// Apply body id and runner mode to a harness spawn command.
@@ -97,6 +119,16 @@ pub fn apply_runner_body_env(
     let mode = runner_mode_for(record, &body_id);
     command.env(BODY_ID_ENV, &body_id);
     command.env(RUNNER_MODE_ENV, mode);
+    // Always set the flag so a parent environment cannot leave a stale
+    // `true` on a harness that should be on the hostname fallback.
+    command.env(
+        PUBLISH_BODY_ENV,
+        if publishes_explicit_body(global) {
+            "true"
+        } else {
+            "false"
+        },
+    );
 }
 
 #[cfg(test)]
@@ -162,26 +194,83 @@ mod tests {
     #[test]
     fn machine_rename_changes_runner_body_env() {
         // Same name, same role: nothing to restart.
-        assert!(!runner_body_changed(&record(None), "mini-2", "mini-2"));
+        assert!(!runner_body_changed(
+            &record(None),
+            "mini-2",
+            "mini-2",
+            false,
+            false
+        ));
         // Renaming the body changes the claim identity even for unassigned agents.
-        assert!(runner_body_changed(&record(None), "mini-2", "studio"));
+        assert!(runner_body_changed(
+            &record(None),
+            "mini-2",
+            "studio",
+            false,
+            false
+        ));
         // Renaming onto/off the assigned machine flips active <-> standby.
         assert!(runner_body_changed(
             &record(Some("studio")),
             "mini-2",
-            "studio"
+            "studio",
+            true,
+            true
         ));
         assert!(runner_body_changed(
             &record(Some("mini-2")),
             "mini-2",
-            "studio"
+            "studio",
+            true,
+            true
         ));
         // Case-only rename keeps the role but still changes the body id.
         assert!(runner_body_changed(
             &record(Some("mini-2")),
             "mini-2",
-            "Mini-2"
+            "Mini-2",
+            true,
+            true
         ));
+    }
+
+    #[test]
+    fn publish_flag_restarts_when_the_body_id_string_is_unchanged() {
+        let record = record(None);
+        // Hostname fallback → explicit name equal to that hostname.
+        assert!(runner_body_changed(
+            &record, "mini-2", "mini-2", false, true
+        ));
+        // Explicit name cleared; the hostname fallback keeps the same body id.
+        assert!(runner_body_changed(
+            &record, "mini-2", "mini-2", true, false
+        ));
+        assert!(!runner_body_changed(
+            &record, "mini-2", "mini-2", true, true
+        ));
+        assert!(!runner_body_changed(
+            &record, "mini-2", "mini-2", false, false
+        ));
+    }
+
+    #[test]
+    fn publishes_only_an_explicit_valid_name() {
+        let named = GlobalAgentConfig {
+            machine_name: Some(" mini-2 ".into()),
+            ..Default::default()
+        };
+        assert!(publishes_explicit_body(&named));
+        assert!(!publishes_explicit_body(&GlobalAgentConfig::default()));
+        let blank = GlobalAgentConfig {
+            machine_name: Some("   ".into()),
+            ..Default::default()
+        };
+        assert!(!publishes_explicit_body(&blank));
+        let controls = GlobalAgentConfig {
+            machine_name: Some("bad\nname".into()),
+            ..Default::default()
+        };
+        assert!(!publishes_explicit_body(&controls));
     }
 
     #[test]
@@ -216,5 +305,16 @@ mod tests {
             .collect();
         assert!(envs.contains(&(BODY_ID_ENV.to_string(), "mini-2".to_string())));
         assert!(envs.contains(&(RUNNER_MODE_ENV.to_string(), "standby".to_string())));
+        assert!(envs.contains(&(PUBLISH_BODY_ENV.to_string(), "true".to_string())));
+
+        let fallback = GlobalAgentConfig::default();
+        let mut quiet = std::process::Command::new("true");
+        apply_runner_body_env(&mut quiet, &record(None), &fallback);
+        let publish = quiet
+            .get_envs()
+            .find(|(k, _)| k == &std::ffi::OsStr::new(PUBLISH_BODY_ENV))
+            .and_then(|(_, v)| v)
+            .map(|v| v.to_string_lossy().into_owned());
+        assert_eq!(publish.as_deref(), Some("false"));
     }
 }
