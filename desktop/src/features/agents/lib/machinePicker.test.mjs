@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { machinePickerOptions, selectedPickerValue } from "./agentHosting.ts";
+import {
+  globalConfigCacheAfterSave,
+  machinePickerOptions,
+  selectedPickerValue,
+  thisMachineLabelSource,
+} from "./agentHosting.ts";
 
 test("picker offers unassigned, this machine, known names, and an unknown current value", () => {
   const options = machinePickerOptions({
@@ -43,5 +48,33 @@ test("a name equal to this machine selects This machine, and an invalid current 
   assert.equal(
     invalid.some((option) => option.label.includes("bad")),
     false,
+  );
+});
+
+test("clearing an explicit name refreshes This machine from the recomputed body id", () => {
+  const view = globalConfigCacheAfterSave(
+    {
+      config: {
+        env_vars: {},
+        provider: null,
+        model: null,
+        preferred_runtime: null,
+        machine_name: null,
+        default_assigned_machine: null,
+      },
+      local_body_id: "mac-mini-2",
+    },
+    "Studio",
+  );
+  assert.equal(view.machine_name, null);
+  assert.equal(view.local_body_id, "mac-mini-2");
+  const options = machinePickerOptions({
+    thisMachine: thisMachineLabelSource(view.machine_name, view.local_body_id),
+    knownMachines: [],
+    current: view.default_assigned_machine,
+  });
+  assert.deepEqual(
+    options.map((option) => option.label),
+    ["Unassigned", "This machine (mac-mini-2)"],
   );
 });

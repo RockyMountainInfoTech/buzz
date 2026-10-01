@@ -941,4 +941,9 @@ export type GlobalAgentConfigSaveResult = {
   restarted_count: number;
   /** Number of agents whose stop succeeded but respawn failed. */
   failed_restart_count: number;
+  /**
+   * This install's body id after the save (explicit name, else hostname).
+   * Not part of the saved document. Absent only if an older harness omits it.
+   */
+  local_body_id?: string;
 };

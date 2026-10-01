@@ -14277,6 +14277,8 @@ export function maybeInstallE2eTauriMocks() {
               provider: string | null;
               model: string | null;
               preferred_runtime: string | null;
+              machine_name?: string | null;
+              local_body_id?: string | null;
             };
           }
         ).config;
@@ -14294,8 +14296,20 @@ export function maybeInstallE2eTauriMocks() {
         mockGlobalAgentConfig = savedConfig;
         // In the E2E environment there are no running agents to restart, so
         // the counts default to 0 unless a spec drives them explicitly.
+        // The real command recomputes local_body_id (hostname when the name
+        // is cleared). The mock has no hostname; it keeps an explicit name
+        // or the id the client already had.
+        const explicitName =
+          typeof savedConfig.machine_name === "string"
+            ? savedConfig.machine_name.trim()
+            : "";
+        const previousBodyId =
+          typeof savedConfig.local_body_id === "string"
+            ? savedConfig.local_body_id
+            : "";
         return {
           config: savedConfig,
+          local_body_id: explicitName || previousBodyId,
           restarted_count: config?.mock?.globalConfigRestartedCount ?? 0,
           failed_restart_count:
             config?.mock?.globalConfigFailedRestartCount ?? 0,

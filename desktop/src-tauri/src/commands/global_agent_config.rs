@@ -37,6 +37,11 @@ pub struct GlobalAgentConfigSaveResult {
     pub restarted_count: u32,
     /// Number of agents whose stop succeeded but respawn failed.
     pub failed_restart_count: u32,
+    /// This install's body id after the save: the configured machine name,
+    /// otherwise the hostname. Not persisted. Pickers use it for "This
+    /// machine", including when a cleared name falls back to the hostname
+    /// while the body-id string is unchanged.
+    pub local_body_id: String,
 }
 
 /// Read view of the global agent config plus this install's resolved body id.
@@ -139,10 +144,12 @@ pub async fn set_global_agent_config(
         }
     }
 
+    let local_body_id = crate::managed_agents::runner_body::local_body_id(&new_global);
     Ok(GlobalAgentConfigSaveResult {
         config: new_global,
         restarted_count,
         failed_restart_count,
+        local_body_id,
     })
 }
 

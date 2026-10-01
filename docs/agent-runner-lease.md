@@ -157,11 +157,13 @@ NOTICE (from block/buzz#3912). Advisory only: arbitration stays client-side.
 
 Log lines to expect: `turn claims enabled` at startup with body and mode;
 `standby body — leaving this turn to the active body` on hard standby; `turn
-claim won`, `turn claim lost — standing down`, `turn claim yielded — sibling
-body already holds these events`, and `late better turn claim — cancelling`
-when claims arbitrate (win, yield, and stand-down include body, scope, and
-winner); `another body claims turns under this machine name` on a name
-collision.
+claim won` only when a window actually closed, `turn claim held — follow-up
+under a scope this body already holds` for a pre-claimed follow-up, `turn
+claim lost — standing down`, `turn claim yielded — sibling body already holds
+these events`, and `late better turn claim — cancelling` when claims arbitrate
+(win, held, yield, and stand-down include body, scope, and winner). Claims
+disabled does not emit `turn claim won`. `another body claims turns under this
+machine name` on a name collision.
 
 ## Display identity
 
