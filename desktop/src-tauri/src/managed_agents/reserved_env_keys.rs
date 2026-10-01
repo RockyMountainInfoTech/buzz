@@ -69,6 +69,11 @@ pub(crate) const RESERVED_ENV_KEYS: &[&str] = &[
     "BUZZ_ACP_NO_PRESENCE",
     "BUZZ_ACP_BODY_ID",
     "BUZZ_ACP_RUNNER_MODE",
+    // Member-visible machine name. Desktop sets the publish flag only for an
+    // explicit Agent hosting name; the harness exports `BUZZ_BODY_ID` only
+    // then. A persona must not forge either one.
+    "BUZZ_ACP_PUBLISH_BODY",
+    "BUZZ_BODY_ID",
     // Readiness handoff: desktop is the ONLY readiness source. A saved or
     // ambient env var must not be able to forge setup mode (NotReady) on a
     // Ready agent or suppress it (empty/stale payload) on a NotReady one.

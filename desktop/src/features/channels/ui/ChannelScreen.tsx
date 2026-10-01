@@ -356,6 +356,7 @@ export function ChannelScreen({
     agentSessionCandidates,
     botTypingEntries,
     humanTypingPubkeys,
+    threadTypingBodies,
     threadTypingPubkeys,
   } = useChannelActivityTyping({
     activeChannel,
@@ -964,6 +965,7 @@ export function ChannelScreen({
                     void threadRepliesQuery.refetch();
                   }}
                   threadPanelWidthPx={threadPanelWidthPx}
+                  threadTypingBodies={threadTypingBodies}
                   threadTypingPubkeys={threadTypingPubkeys}
                   threadReplyTargetMessage={displayedThreadReplyTargetMessage}
                   threadScrollTargetId={threadScrollTargetId}

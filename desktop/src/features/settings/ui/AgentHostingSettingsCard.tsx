@@ -6,6 +6,9 @@ import {
   machineNameError,
   normalizeMachineName,
 } from "@/features/agents/lib/agentHosting";
+import { MachineNamePicker } from "@/features/agents/ui/MachineNamePicker";
+import { useManagedAgentsQuery } from "@/features/agents/hooks";
+import { publishableMachineName } from "@/features/messages/lib/runnerBodyLabel";
 import { globalAgentConfigQueryKey } from "@/features/agents/useGlobalAgentConfig";
 import {
   getGlobalAgentConfig,
@@ -27,7 +30,9 @@ export function AgentHostingSettingsCard() {
   const queryClient = useQueryClient();
   const [config, setConfig] = React.useState<GlobalAgentConfig | null>(null);
   const [machineName, setMachineName] = React.useState("");
+  const [localBodyId, setLocalBodyId] = React.useState("");
   const [defaultMachine, setDefaultMachine] = React.useState("");
+  const managedAgentsQuery = useManagedAgentsQuery();
   const [saveState, setSaveState] = React.useState<SaveState>("idle");
   const [error, setError] = React.useState<string | null>(null);
 
@@ -40,6 +45,7 @@ export function AgentHostingSettingsCard() {
         }
         setConfig(loaded);
         setMachineName(loaded.machine_name ?? "");
+        setLocalBodyId(loaded.local_body_id ?? "");
         setDefaultMachine(loaded.default_assigned_machine ?? "");
       })
       .catch((cause: unknown) => {
@@ -136,18 +142,20 @@ export function AgentHostingSettingsCard() {
           >
             Default machine for new agents
           </label>
-          <Input
-            autoCapitalize="off"
-            autoCorrect="off"
+          <MachineNamePicker
             disabled={config === null}
             id="agent-hosting-default-machine"
-            onChange={(event) => {
-              setDefaultMachine(event.target.value);
+            knownMachines={(managedAgentsQuery.data ?? []).map(
+              (agent) => agent.assignedMachine,
+            )}
+            onValueChange={(value) => {
+              setDefaultMachine(value);
               setSaveState("idle");
             }}
-            placeholder="Unassigned"
-            spellCheck={false}
-            type="text"
+            thisMachine={
+              publishableMachineName(machineName) ??
+              publishableMachineName(localBodyId)
+            }
             value={defaultMachine}
           />
           <p className="text-xs text-muted-foreground">

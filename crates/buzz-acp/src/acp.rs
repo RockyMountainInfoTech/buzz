@@ -418,6 +418,55 @@ fn build_client_capabilities() -> serde_json::Value {
     })
 }
 
+/// Strip an inherited `BUZZ_BODY_ID`, then set a publishable one when
+/// `publish` is true. A hostname fallback (`publish == false`) leaves the
+/// agent without the variable, so `buzz messages send` adds no `body` tag.
+pub(crate) fn apply_agent_body_env(
+    cmd: &mut tokio::process::Command,
+    publish: bool,
+    body_id: &str,
+) {
+    cmd.env_remove("BUZZ_BODY_ID");
+    if !publish {
+        return;
+    }
+    if let Some(label) = buzz_core::body_label::publishable(body_id) {
+        cmd.env("BUZZ_BODY_ID", label);
+    }
+}
+
+#[cfg(test)]
+mod apply_agent_body_env_tests {
+    use super::apply_agent_body_env;
+
+    fn body_env(cmd: &tokio::process::Command) -> Option<Option<String>> {
+        cmd.as_std().get_envs().find_map(|(key, value)| {
+            (key == "BUZZ_BODY_ID").then(|| value.map(|item| item.to_string_lossy().into_owned()))
+        })
+    }
+
+    #[test]
+    fn exports_only_a_publishable_explicit_name() {
+        let mut publish = tokio::process::Command::new("true");
+        publish.env("BUZZ_BODY_ID", "inherited");
+        apply_agent_body_env(&mut publish, true, "  MacMiniM5Pro  ");
+        assert_eq!(body_env(&publish), Some(Some("MacMiniM5Pro".to_string())));
+
+        let mut fallback = tokio::process::Command::new("true");
+        fallback.env("BUZZ_BODY_ID", "inherited");
+        apply_agent_body_env(&mut fallback, false, "MacMiniM5Pro");
+        assert_eq!(body_env(&fallback), Some(None));
+
+        let mut controls = tokio::process::Command::new("true");
+        apply_agent_body_env(&mut controls, true, "bad\nname");
+        assert_eq!(body_env(&controls), Some(None));
+
+        let mut blank = tokio::process::Command::new("true");
+        apply_agent_body_env(&mut blank, true, "   ");
+        assert_eq!(body_env(&blank), Some(None));
+    }
+}
+
 impl AcpClient {
     /// Kill the agent subprocess and wait for it to exit (no zombies).
     ///
@@ -587,6 +636,14 @@ impl AcpClient {
             };
         cmd.envs(launch_env.iter().cloned());
         cmd.env_remove(launch::PREFIX_ENV);
+        // Member-visible identity is harness-owned. Drop anything the parent
+        // or a persona injected, then export `BUZZ_BODY_ID` only when Desktop
+        // marked this process as an explicit machine name.
+        let publish = crate::config::publish_body_enabled(
+            std::env::var("BUZZ_ACP_PUBLISH_BODY").ok().as_deref(),
+        );
+        let body_id = std::env::var("BUZZ_ACP_BODY_ID").unwrap_or_default();
+        apply_agent_body_env(&mut cmd, publish, &body_id);
         let mut child = cmd.spawn().map_err(|error| {
             std::io::Error::new(
                 error.kind(),

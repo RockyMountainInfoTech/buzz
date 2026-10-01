@@ -407,6 +407,14 @@ pub struct CliArgs {
     #[arg(long, env = "BUZZ_ACP_BODY_ID")]
     pub body_id: Option<String>,
 
+    /// Publish this body's machine name on member-visible events and export
+    /// it to the agent as `BUZZ_BODY_ID`. Desktop sets this only when Agent
+    /// hosting has an explicit machine name. Accepted values are `1`, `true`,
+    /// and `yes` (any case). `false`, `0`, and any other string do not publish,
+    /// so a leftover `false` cannot leak the hostname fallback.
+    #[arg(long, env = "BUZZ_ACP_PUBLISH_BODY")]
+    pub publish_body: Option<String>,
+
     /// Role of this body when the same agent key runs on several machines.
     /// active: run turns (claims at rank 0). standby: yield to any active
     /// body; with claims enabled it still claims at rank 1 and takes over when
@@ -605,6 +613,10 @@ pub struct Config {
     pub typing_enabled: bool,
     /// Identifier of this body (machine) of the agent identity.
     pub body_id: String,
+    /// When true, typing indicators carry a `body` tag and the agent process
+    /// receives `BUZZ_BODY_ID`. Claims, observer frames, and logs always use
+    /// [`Config::body_id`] whether or not this is set.
+    pub publish_body: bool,
     /// Role of this body when the same key runs on several machines.
     pub runner_mode: crate::turn_claim::RunnerMode,
     /// Turn-claim window in milliseconds; 0 disables claims.
@@ -955,7 +967,26 @@ pub fn propagate_legacy_env_vars() {
     }
 }
 
+/// `1`, `true`, and `yes` publish. Unset, `false`, `0`, and any other string
+/// do not, so a leftover `false` cannot leak the hostname fallback.
+pub(crate) fn publish_body_enabled(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(str::trim)
+            .map(|value| value.to_ascii_lowercase())
+            .as_deref(),
+        Some("1" | "true" | "yes")
+    )
+}
+
 impl Config {
+    /// Machine name safe to put on a member-visible event, if publishing is on.
+    pub fn published_body_label(&self) -> Option<String> {
+        if !self.publish_body {
+            return None;
+        }
+        buzz_core::body_label::publishable(&self.body_id)
+    }
+
     pub fn from_cli() -> Result<Self, ConfigError> {
         // Legacy env-var propagation is intentionally NOT done here.
         // Call `propagate_legacy_env_vars()` before the tokio runtime starts
@@ -1222,6 +1253,7 @@ impl Config {
             presence_enabled: !args.no_presence,
             typing_enabled: !args.no_typing,
             body_id: crate::turn_claim::resolve_body_id(args.body_id.as_deref()),
+            publish_body: publish_body_enabled(args.publish_body.as_deref()),
             runner_mode: args.runner_mode,
             claim_window_ms: args.claim_window_ms,
             memory_enabled: args.memory && !args.no_memory,
@@ -1266,10 +1298,11 @@ impl Config {
             format!(" allowed_respond_to=[{}]", modes.join(","))
         };
         format!(
-            "relay={} pubkey={} body={} runner_mode={} claim_window_ms={} agent_cmd={} {} mcp_cmd={} idle_timeout={}s max_turn={}s agents={} heartbeat={}s subscribe={:?} dedup={:?} session_policy={} meh={:?} ignore_self={} context_limit={} max_turns_per_session={} presence={} typing={} memory={} model={} permission_mode={} {}{}",
+            "relay={} pubkey={} body={} publish_body={} runner_mode={} claim_window_ms={} agent_cmd={} {} mcp_cmd={} idle_timeout={}s max_turn={}s agents={} heartbeat={}s subscribe={:?} dedup={:?} session_policy={} meh={:?} ignore_self={} context_limit={} max_turns_per_session={} presence={} typing={} memory={} model={} permission_mode={} {}{}",
             self.relay_url,
             self.keys.public_key().to_hex(),
             self.body_id,
+            self.publish_body,
             self.runner_mode,
             self.claim_window_ms,
             self.agent_command,
@@ -1599,6 +1632,7 @@ mod tests {
             multiple_event_handling: MultipleEventHandling::Queue,
             ignore_self: true,
             body_id: "test-body".to_string(),
+            publish_body: false,
             runner_mode: crate::turn_claim::RunnerMode::Active,
             claim_window_ms: 0,
             kinds_override: None,
@@ -1628,6 +1662,18 @@ mod tests {
             no_base_prompt: false,
             base_prompt_content: None,
         }
+    }
+
+    #[test]
+    fn publish_body_accepts_only_explicit_truthy_values() {
+        assert!(publish_body_enabled(Some("true")));
+        assert!(publish_body_enabled(Some(" YES ")));
+        assert!(publish_body_enabled(Some("1")));
+        assert!(!publish_body_enabled(None));
+        assert!(!publish_body_enabled(Some("")));
+        assert!(!publish_body_enabled(Some("false")));
+        assert!(!publish_body_enabled(Some("0")));
+        assert!(!publish_body_enabled(Some("hostname")));
     }
 
     fn make_rule(

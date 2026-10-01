@@ -1289,6 +1289,7 @@ mod tests {
     use buzz_core::kind::{
         KIND_AGENT_OBSERVER_FRAME, KIND_CANVAS, KIND_FORUM_COMMENT, KIND_FORUM_POST,
         KIND_FORUM_VOTE, KIND_PRESENCE_UPDATE, KIND_STREAM_MESSAGE, KIND_STREAM_MESSAGE_DIFF,
+        KIND_TYPING_INDICATOR,
     };
     use buzz_core::observer::{
         encrypt_observer_payload, OBSERVER_AGENT_TAG, OBSERVER_FRAME_CONTROL, OBSERVER_FRAME_TAG,
@@ -1298,6 +1299,53 @@ mod tests {
     use tokio::sync::{mpsc, Mutex};
     use tokio_util::sync::CancellationToken;
     use uuid::Uuid;
+
+    #[test]
+    fn body_tag_on_kind_9_and_20002_survives_verify_and_fanout_serialization() {
+        // Unit proof of the fan-out path: verify the signature, store the
+        // event, then serialize it the same way
+        // `fan_out_event_to_local_subscribers` does (`serde_json::to_string`
+        // of the stored event, then `event_frame_for_sub`). The full accept
+        // handler also needs Postgres and Redis (`#[ignore]` on the presence
+        // fan-out tests); this does not change relay tag policy.
+        let keys = Keys::generate();
+        let channel = "11111111-1111-1111-1111-111111111111";
+        for kind in [KIND_STREAM_MESSAGE, KIND_TYPING_INDICATOR] {
+            let content = if kind == KIND_STREAM_MESSAGE {
+                "hello"
+            } else {
+                ""
+            };
+            let event = EventBuilder::new(Kind::Custom(kind as u16), content)
+                .tags(vec![
+                    Tag::parse(["h", channel]).unwrap(),
+                    Tag::parse(["body", "MacMiniM5Pro"]).unwrap(),
+                ])
+                .sign_with_keys(&keys)
+                .unwrap();
+            buzz_core::verification::verify_event(&event).unwrap();
+            let stored = buzz_core::event::StoredEvent::new(event.clone(), None);
+            let event_json = serde_json::to_string(&stored.event).unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&event_json).unwrap();
+            assert_eq!(parsed["id"], event.id.to_hex());
+            assert_eq!(parsed["kind"], kind);
+            let body = parsed["tags"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tag| tag[0] == "body")
+                .expect("body tag");
+            assert_eq!(body[1], "MacMiniM5Pro");
+
+            let frame = super::event_frame_for_sub("sub", &event_json);
+            let frame_value: serde_json::Value = serde_json::from_str(&frame).unwrap();
+            assert_eq!(frame_value[0], "EVENT");
+            assert_eq!(frame_value[1], "sub");
+            assert_eq!(frame_value[2]["id"], event.id.to_hex());
+            assert_eq!(frame_value[2]["tags"][1][0], "body");
+            assert_eq!(frame_value[2]["tags"][1][1], "MacMiniM5Pro");
+        }
+    }
 
     #[test]
     fn fanout_event_frame_matches_legacy_format_byte_for_byte() {

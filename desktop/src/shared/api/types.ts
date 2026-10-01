@@ -922,6 +922,11 @@ export type GlobalAgentConfig = {
   machine_name?: string | null;
   /** Machine newly created agents are assigned to; null = unassigned. */
   default_assigned_machine?: string | null;
+  /**
+   * Resolved body id for this install (explicit name, else hostname).
+   * Returned by get; not part of the saved document.
+   */
+  local_body_id?: string;
 };
 
 /**

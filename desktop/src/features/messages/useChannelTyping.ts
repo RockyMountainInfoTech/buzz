@@ -12,10 +12,13 @@ import {
   KIND_TYPING_INDICATOR,
 } from "@/shared/constants/kinds";
 import { resolveEventAuthorPubkey } from "@/shared/lib/authors";
+import { typingBodyAfterEvent } from "@/features/messages/lib/runnerBodyLabel";
 
 export type TypingIndicatorEntry = {
   pubkey: string;
   threadHeadId: string | null;
+  /** Latest publishable `body` tag. A later event with no tag clears it. */
+  body: string | null;
 };
 
 type TypingEntry = {
@@ -23,6 +26,7 @@ type TypingEntry = {
   firstSeenAt: number;
   pubkey: string;
   threadHeadId: string | null;
+  body: string | null;
 };
 type TypingState = Record<string, TypingEntry>;
 
@@ -125,6 +129,7 @@ export function useChannelTyping(
           firstSeenAt: existing?.firstSeenAt ?? now,
           pubkey: typingPubkey,
           threadHeadId,
+          body: typingBodyAfterEvent(existing?.body ?? null, event.tags),
         },
       };
     });
@@ -234,7 +239,11 @@ export function useChannelTyping(
     () =>
       Object.values(typingByPubkey)
         .sort((left, right) => left.firstSeenAt - right.firstSeenAt)
-        .map(({ pubkey, threadHeadId }) => ({ pubkey, threadHeadId })),
+        .map(({ pubkey, threadHeadId, body }) => ({
+          pubkey,
+          threadHeadId,
+          body,
+        })),
     [typingByPubkey],
   );
 }

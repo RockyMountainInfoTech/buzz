@@ -191,6 +191,7 @@ export type ChannelPaneProps = {
   onRetryThreadReplies?: () => void;
   threadPanelWidthPx: number;
   threadTypingPubkeys: string[];
+  threadTypingBodies?: readonly (string | null)[];
   threadReplyTargetMessage: TimelineMessage | null;
   threadScrollTargetId: string | null;
   threadUnreadCounts?: ReadonlyMap<string, number>;

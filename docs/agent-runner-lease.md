@@ -138,8 +138,12 @@ NOTICE (from block/buzz#3912). Advisory only: arbitration stays client-side.
   unassigned or assigned to this machine (case-insensitive), else `standby`.
   Both keys are reserved so user env cannot shadow them. The assignment is
   part of the spawn snapshot, so changing it restarts the agent. Renaming the
-  machine in "Agent hosting" restarts every running local agent whose body id
-  or role would change, so claims never carry a stale body id.
+  machine in "Agent hosting" restarts every running local agent whose body id,
+  role, or publish flag would change, so claims never carry a stale body id
+  and a running harness does not keep a stale `BUZZ_ACP_PUBLISH_BODY`. Saving
+  a name equal to the hostname, or clearing a name that equals it, leaves the
+  body id string unchanged and still restarts, because that save flips the
+  publish flag.
 
 ## Operating a two-machine fleet
 
@@ -153,10 +157,17 @@ NOTICE (from block/buzz#3912). Advisory only: arbitration stays client-side.
 
 Log lines to expect: `turn claims enabled` at startup with body and mode;
 `standby body — leaving this turn to the active body` on hard standby; `turn
-claim lost — standing down`, `turn claim yielded — sibling body already holds
-these events`, and `late better turn claim — cancelling` when claims
-arbitrate; `another body claims turns under this machine name` on a name
+claim won`, `turn claim lost — standing down`, `turn claim yielded — sibling
+body already holds these events`, and `late better turn claim — cancelling`
+when claims arbitrate (win, yield, and stand-down include body, scope, and
+winner); `another body claims turns under this machine name` on a name
 collision.
+
+## Display identity
+
+Stacked on the lease. One optional self-reported tag, `["body", "<machine name>"]`, on kind 20002 and on messages the agent sends. Display only: claim ranking does not read it.
+
+Desktop sets `BUZZ_ACP_PUBLISH_BODY=true` only when Agent hosting has an explicit machine name that passes validation, and `false` otherwise. The harness adds the tag and exports `BUZZ_BODY_ID` to the agent only when that value is `1`, `true`, or `yes` and the name is publishable (trimmed, non-empty, at most 64 characters, no controls). A hostname fallback still claims, still fills owner-only observer `bodyId`, and still logs, and it publishes no tag. Spawn strips an inherited `BUZZ_BODY_ID` unless the harness itself injects a publishable one. Both keys are reserved so a persona cannot forge them.
 
 ## Not in this change
 

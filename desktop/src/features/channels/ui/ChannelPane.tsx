@@ -56,6 +56,7 @@ import {
   shouldPrioritizeIdleAuxiliary,
   shouldUseFocusIdleDrawer,
 } from "@/features/channels/ui/ChannelPane.helpers";
+import { singleWorkingBody } from "@/features/messages/lib/runnerBodyLabel";
 import { HuddleStartingView, HuddleTranscriptIntro } from "@/features/huddle";
 import { ChannelGlyph } from "@/features/channels/ui/ChannelGlyph";
 import { useSearchHighlightProps } from "@/features/channels/ui/useSearchHighlightProps";
@@ -180,6 +181,7 @@ export const ChannelPane = React.memo(function ChannelPane({
   threadPanelWidthPx,
   threadScrollTargetId,
   threadTypingPubkeys,
+  threadTypingBodies = [],
   threadReplyTargetMessage,
   threadUnreadCounts,
   threadReplyUnreadCounts,
@@ -347,6 +349,24 @@ export const ChannelPane = React.memo(function ChannelPane({
   );
   const hasThreadComposerBotActivity =
     threadComposerBotTypingPubkeys.length > 0;
+  const composerRunningFrom = React.useMemo(
+    () =>
+      singleWorkingBody(
+        botTypingEntries.filter((entry) => entry.threadHeadId === null),
+        composerWorkingBotPubkeys,
+      ),
+    [botTypingEntries, composerWorkingBotPubkeys],
+  );
+  const threadRunningFrom = React.useMemo(
+    () =>
+      singleWorkingBody(
+        botTypingEntries.filter(
+          (entry) => entry.threadHeadId === openThreadHeadId,
+        ),
+        threadComposerBotTypingPubkeys,
+      ),
+    [botTypingEntries, openThreadHeadId, threadComposerBotTypingPubkeys],
+  );
   const directMessageIntro = React.useMemo(
     () =>
       buildDirectMessageIntro({
@@ -799,6 +819,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                     onOpenAgentSession={onOpenAgentSession}
                     openAgentSessionPubkey={openAgentSessionPubkey}
                     profiles={profiles}
+                    runningFrom={composerRunningFrom}
                     typingPubkeys={typingPubkeys}
                     visible={hasComposerBottomActivity}
                     workingBotPubkeys={composerWorkingBotPubkeys}
@@ -888,6 +909,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                   threadHeadMessage.id,
                 )}
                 threadReplyUnreadCounts={threadReplyUnreadCounts}
+                threadTypingBodies={threadTypingBodies}
                 threadTypingPubkeys={threadTypingPubkeys}
                 activityAccessoryVisible={hasThreadComposerBotActivity}
                 activityAccessoryContent={
@@ -898,6 +920,7 @@ export const ChannelPane = React.memo(function ChannelPane({
                       onOpenAgentSession={onOpenAgentSession}
                       openAgentSessionPubkey={openAgentSessionPubkey}
                       profiles={profiles}
+                      runningFrom={threadRunningFrom}
                       workingBotPubkeys={threadComposerBotTypingPubkeys}
                       variant="inline"
                     />

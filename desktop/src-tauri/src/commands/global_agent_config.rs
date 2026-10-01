@@ -39,13 +39,29 @@ pub struct GlobalAgentConfigSaveResult {
     pub failed_restart_count: u32,
 }
 
+/// Read view of the global agent config plus this install's resolved body id.
+///
+/// `local_body_id` is computed (configured name, else hostname). It is not
+/// persisted and is not a synced setting; pickers use it for "This machine".
+#[derive(Debug, Clone, Serialize)]
+pub struct GlobalAgentConfigView {
+    #[serde(flatten)]
+    pub config: GlobalAgentConfig,
+    pub local_body_id: String,
+}
+
 /// Read the current global agent configuration.
 ///
 /// Returns the default (empty) config if `global-agent-config.json` has not
 /// been written yet.
 #[tauri::command]
-pub fn get_global_agent_config(app: AppHandle) -> Result<GlobalAgentConfig, String> {
-    load_global_agent_config(&app)
+pub fn get_global_agent_config(app: AppHandle) -> Result<GlobalAgentConfigView, String> {
+    let config = load_global_agent_config(&app)?;
+    let local_body_id = crate::managed_agents::runner_body::local_body_id(&config);
+    Ok(GlobalAgentConfigView {
+        config,
+        local_body_id,
+    })
 }
 
 /// Validate and persist a new global agent configuration, then auto-restart
@@ -222,7 +238,11 @@ fn collect_restart_candidates(
             // are injected at spawn outside `EffectiveAgentEnv`, so a machine
             // rename is diffed here explicitly.
             let runner_changed = crate::managed_agents::runner_body::runner_body_changed(
-                record, &old_body, &new_body,
+                record,
+                &old_body,
+                &new_body,
+                crate::managed_agents::runner_body::publishes_explicit_body(old_global),
+                crate::managed_agents::runner_body::publishes_explicit_body(new_global),
             );
             let env_changed =
                 old_ready && (old_effective.env != new_effective.env || runner_changed);
@@ -335,6 +355,8 @@ async fn restart_local_agent_on_config_change(
             record,
             &crate::managed_agents::runner_body::local_body_id(&old_global_clone),
             &crate::managed_agents::runner_body::local_body_id(&new_global_clone),
+            crate::managed_agents::runner_body::publishes_explicit_body(&old_global_clone),
+            crate::managed_agents::runner_body::publishes_explicit_body(&new_global_clone),
         );
         let env_changed = old_ready && (old_effective.env != new_effective.env || runner_changed);
         if !should_restart_on_config_change(old_ready, new_ready, env_changed) {

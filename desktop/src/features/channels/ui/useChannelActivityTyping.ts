@@ -75,16 +75,22 @@ export function useChannelActivityTyping({
       ),
     [channelAgentSessionAgents],
   );
-  const threadTypingPubkeys = React.useMemo(
+  const threadTyping = React.useMemo(
     () =>
-      typingEntries
-        .filter(
-          (entry) =>
-            entry.threadHeadId === openThreadHeadId &&
-            !channelAgentPubkeys.has(normalizePubkey(entry.pubkey)),
-        )
-        .map((entry) => entry.pubkey),
+      typingEntries.filter(
+        (entry) =>
+          entry.threadHeadId === openThreadHeadId &&
+          !channelAgentPubkeys.has(normalizePubkey(entry.pubkey)),
+      ),
     [channelAgentPubkeys, openThreadHeadId, typingEntries],
+  );
+  const threadTypingPubkeys = React.useMemo(
+    () => threadTyping.map((entry) => entry.pubkey),
+    [threadTyping],
+  );
+  const threadTypingBodies = React.useMemo(
+    () => threadTyping.map((entry) => entry.body),
+    [threadTyping],
   );
   const { botTypingEntries, humanTypingPubkeys } = React.useMemo<{
     botTypingEntries: TypingIndicatorEntry[];
@@ -126,6 +132,7 @@ export function useChannelActivityTyping({
     botTypingEntries,
     channelAgentSessionAgents,
     humanTypingPubkeys,
+    threadTypingBodies,
     threadTypingPubkeys,
   };
 }

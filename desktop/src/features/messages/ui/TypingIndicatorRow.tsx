@@ -9,6 +9,7 @@ import type { Channel } from "@/shared/api/types";
 import { cn } from "@/shared/lib/cn";
 import { Shimmer } from "@/shared/ui/Shimmer";
 import { truncateNpub } from "@/shared/lib/pubkey";
+import { typingIndicatorCopy } from "@/features/messages/lib/typingIndicatorLabel";
 
 type TypingIndicatorRowProps = {
   channel: Channel | null;
@@ -16,6 +17,8 @@ type TypingIndicatorRowProps = {
   currentPubkey?: string;
   profiles?: UserProfileLookup;
   typingPubkeys: string[];
+  /** Parallel to `typingPubkeys`. Latest body for that typer, or null. */
+  typingBodies?: readonly (string | null)[];
   variant?: "default" | "activity";
 };
 
@@ -35,28 +38,13 @@ function resolveFallbackName(channel: Channel | null, pubkey: string) {
   return channel.participants[participantIndex] ?? null;
 }
 
-function formatTypingLabel(names: string[]) {
-  if (names.length === 1) {
-    return `${names[0]} is typing...`;
-  }
-
-  if (names.length === 2) {
-    return `${names[0]} and ${names[1]} are typing...`;
-  }
-
-  if (names.length === 3) {
-    return `${names[0]}, ${names[1]}, and ${names[2]} are typing...`;
-  }
-
-  return `${names[0]}, ${names[1]}, and ${names.length - 2} others are typing...`;
-}
-
 export function TypingIndicatorRow({
   channel,
   className,
   currentPubkey,
   profiles,
   typingPubkeys,
+  typingBodies,
   variant = "default",
 }: TypingIndicatorRowProps) {
   const isActivityVariant = variant === "activity";
@@ -73,6 +61,13 @@ export function TypingIndicatorRow({
       ),
     [channel, currentPubkey, profiles, typingPubkeys],
   );
+  const copy = typingIndicatorCopy({
+    names: labels,
+    bodies: typingBodies,
+    agentFlags: typingPubkeys.map(
+      (pubkey) => profiles?.[pubkey.toLowerCase()]?.isAgent === true,
+    ),
+  });
 
   return (
     <div
@@ -133,8 +128,9 @@ export function TypingIndicatorRow({
                 : "text-xs font-medium leading-4",
             )}
             data-testid="message-typing-indicator-label"
+            title={copy.tooltip ?? undefined}
           >
-            <Shimmer>{formatTypingLabel(labels)}</Shimmer>
+            <Shimmer>{copy.text}</Shimmer>
           </p>
         </div>
       )}

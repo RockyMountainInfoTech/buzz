@@ -9,6 +9,8 @@ export type ObserverEvent = {
   sessionId: string | null;
   turnId: string | null;
   startedAt?: string | null;
+  /** Owner-only machine id. Present for the hostname fallback too. */
+  bodyId?: string | null;
   payload: unknown;
 };
 

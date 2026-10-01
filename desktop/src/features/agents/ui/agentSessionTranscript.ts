@@ -28,6 +28,7 @@ import {
   parseSystemPromptSections,
 } from "./agentSessionTranscriptHelpers";
 import { friendlyTurnErrorCopy } from "../lib/friendlyAgentLastError";
+import { publishableMachineName } from "@/features/messages/lib/runnerBodyLabel";
 
 export { describeRawEvent } from "./agentSessionTranscriptHelpers";
 
@@ -737,11 +738,14 @@ export function processTranscriptEvent(
       event.turnId ?? event.seq,
       extractTriggeringEventIds(event.payload),
     );
+    const runningFrom = publishableMachineName(event.bodyId);
     upsertTextItem(
       d,
       `turn:${ch}:${event.turnId ?? event.seq}`,
       "lifecycle",
-      "Turn started",
+      runningFrom
+        ? `Turn started · Running from: ${runningFrom}`
+        : "Turn started",
       describeTurnStarted(event.payload),
       event.timestamp,
       ctx,
