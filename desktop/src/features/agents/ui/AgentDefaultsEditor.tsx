@@ -19,6 +19,7 @@ import {
 } from "@/shared/api/tauriGlobalAgentConfig";
 import type { GlobalAgentConfig } from "@/shared/api/types";
 import { getBakedBuildEnv, type BakedEnvEntry } from "@/shared/api/tauri";
+import { globalConfigCacheAfterSave } from "@/features/agents/lib/agentHosting";
 import { globalAgentConfigQueryKey } from "@/features/agents/useGlobalAgentConfig";
 import {
   useAcpRuntimesQuery,
@@ -208,22 +209,30 @@ export function AgentDefaultsEditor({
       // so they can save again. setDirty(false) runs inside the updater so both
       // state updates batch into the same render (React 18 automatic batching).
       const savedCurrentDraft = configRef.current === submittedConfig;
+      const previous = queryClient.getQueryData<GlobalAgentConfig>(
+        globalAgentConfigQueryKey,
+      );
+      const savedView = globalConfigCacheAfterSave(
+        result,
+        previous?.local_body_id ?? submittedConfig.local_body_id,
+      );
       setConfig((current) => {
         if (!savedCurrentDraft) {
           // Mid-flight edit detected — do not overwrite newer user input.
           return current;
         }
-        configRef.current = result.config;
+        configRef.current = savedView;
         setDirty(false);
-        return result.config;
+        return savedView;
       });
       setRestartedCount(result.restarted_count);
       setFailedRestartCount(result.failed_restart_count);
       setSaveState("saved");
       // Seed the shared TanStack Query cache with the canonical saved value so
       // all open dialogs (and any that open afterward) see the new config
-      // synchronously — no second IPC round-trip needed.
-      queryClient.setQueryData(globalAgentConfigQueryKey, result.config);
+      // synchronously — no second IPC round-trip needed. Keep local_body_id:
+      // the persisted config omits it, and a cleared name returns the hostname.
+      queryClient.setQueryData(globalAgentConfigQueryKey, savedView);
       if (savedCurrentDraft) onSaveSuccess?.(result);
       if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
       // Partial restart failures require an explicit acknowledgment in the

@@ -3,12 +3,13 @@ import * as React from "react";
 import {
   AGENT_HOSTING_DEFAULT_MACHINE_HELP,
   AGENT_HOSTING_MACHINE_NAME_HELP,
+  globalConfigCacheAfterSave,
   machineNameError,
   normalizeMachineName,
+  thisMachineLabelSource,
 } from "@/features/agents/lib/agentHosting";
 import { MachineNamePicker } from "@/features/agents/ui/MachineNamePicker";
 import { useManagedAgentsQuery } from "@/features/agents/hooks";
-import { publishableMachineName } from "@/features/messages/lib/runnerBodyLabel";
 import { globalAgentConfigQueryKey } from "@/features/agents/useGlobalAgentConfig";
 import {
   getGlobalAgentConfig,
@@ -89,16 +90,18 @@ export function AgentHostingSettingsCard() {
     };
     try {
       const result = await setGlobalAgentConfig(next);
-      setConfig(result.config);
-      setMachineName(result.config.machine_name ?? "");
-      setDefaultMachine(result.config.default_assigned_machine ?? "");
-      queryClient.setQueryData(globalAgentConfigQueryKey, result.config);
+      const savedView = globalConfigCacheAfterSave(result, localBodyId);
+      setConfig(savedView);
+      setMachineName(savedView.machine_name ?? "");
+      setLocalBodyId(savedView.local_body_id ?? "");
+      setDefaultMachine(savedView.default_assigned_machine ?? "");
+      queryClient.setQueryData(globalAgentConfigQueryKey, savedView);
       setSaveState("saved");
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setSaveState("error");
     }
-  }, [config, defaultMachine, machineName, queryClient]);
+  }, [config, defaultMachine, localBodyId, machineName, queryClient]);
 
   return (
     <SettingsOptionGroup
@@ -152,10 +155,7 @@ export function AgentHostingSettingsCard() {
               setDefaultMachine(value);
               setSaveState("idle");
             }}
-            thisMachine={
-              publishableMachineName(machineName) ??
-              publishableMachineName(localBodyId)
-            }
+            thisMachine={thisMachineLabelSource(machineName, localBodyId)}
             value={defaultMachine}
           />
           <p className="text-xs text-muted-foreground">

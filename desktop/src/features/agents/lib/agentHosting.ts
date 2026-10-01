@@ -5,6 +5,7 @@
  */
 
 import { publishableMachineName } from "@/features/messages/lib/runnerBodyLabel";
+import type { GlobalAgentConfig } from "@/shared/api/types";
 
 export const EDIT_AGENT_ASSIGNED_MACHINE_HELP =
   "Name of the machine that answers for this agent. Other machines that also host it stand by and take over if that machine stops responding. Leave empty to let every machine run it.";
@@ -122,6 +123,38 @@ export function selectedPickerValue(
     (option) => option.value.toLowerCase() === name.toLowerCase(),
   );
   return match?.value ?? "";
+}
+
+/**
+ * Query-cache shape after `set_global_agent_config`. The persisted config
+ * alone has no `local_body_id`. A cleared explicit name reports the hostname
+ * here; callers must replace the previous id instead of keeping it.
+ * A blank or missing id keeps `previousLocalBodyId` (older harness).
+ */
+export function globalConfigCacheAfterSave(
+  result: {
+    config: GlobalAgentConfig;
+    local_body_id?: string | null;
+  },
+  previousLocalBodyId: string | null | undefined,
+): GlobalAgentConfig {
+  const reported = (result.local_body_id ?? "").trim();
+  const localBodyId =
+    reported.length > 0 ? reported : (previousLocalBodyId ?? "").trim();
+  return {
+    ...result.config,
+    ...(localBodyId.length > 0 ? { local_body_id: localBodyId } : {}),
+  };
+}
+
+/** Explicit name when set, otherwise the resolved body id. */
+export function thisMachineLabelSource(
+  machineName: string | null | undefined,
+  localBodyId: string | null | undefined,
+): string | null {
+  return (
+    publishableMachineName(machineName) ?? publishableMachineName(localBodyId)
+  );
 }
 
 /** Whether two machine names refer to the same machine. */

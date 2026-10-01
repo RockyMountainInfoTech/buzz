@@ -253,6 +253,18 @@ pub enum GateDecision {
     },
 }
 
+/// Why a dispatch should be logged. Display only: [`ClaimGate::admit`] does
+/// not branch on it, and claim ranking does not read it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DispatchClaimLog {
+    /// Claims are disabled, or this batch is not riding a clearance.
+    Silent,
+    /// The claim window closed and this body is spawning the turn.
+    Won,
+    /// A follow-up pre-claimed while this body already held the scope.
+    HeldScope,
+}
+
 /// Outcome of a sibling claim arriving.
 #[derive(Debug)]
 pub enum ClaimVerdict {
@@ -283,11 +295,12 @@ pub struct ClaimGate {
     window: Duration,
     /// Parked batches keyed by their first event id.
     parked: HashMap<String, ParkedBatch>,
-    /// Event id → (scope, cleared-at) for ids this body claimed and won: the
-    /// first id of a batch whose window closed, a batch returned unspawned
-    /// (busy owner, pool exhausted), or a follow-up pre-claimed under the
-    /// scope lease. A batch whose first id is here dispatches without a claim.
-    cleared: HashMap<String, (SessionScope, Instant)>,
+    /// Event id → clearance for ids this body claimed and may dispatch without
+    /// a new window: the first id of a batch whose window closed, a batch
+    /// returned unspawned (busy owner, pool exhausted), or a follow-up
+    /// pre-claimed under the scope lease. A batch whose first id is here
+    /// dispatches without a claim. `held_scope` is for the dispatch log only.
+    cleared: HashMap<String, Clearance>,
     /// Event id → (scope, dispatched-at) for turns this body spawned under a
     /// claim, so a late better claim can still cancel the in-flight turn. The
     /// main loop drops a scope's entries as soon as its turn result or panic
@@ -333,6 +346,17 @@ struct ParkedBatch {
     deadline: Instant,
 }
 
+/// A won or pre-claimed event id waiting to dispatch without a new window.
+#[derive(Debug, Clone)]
+struct Clearance {
+    scope: SessionScope,
+    at: Instant,
+    /// True when [`ClaimGate::pre_claim`] recorded this id because the body
+    /// already held the scope. False when a window closed or an unspawned
+    /// win was handed back.
+    held_scope: bool,
+}
+
 impl ClaimGate {
     /// Create a gate. `window_ms == 0` disables claims entirely: active bodies
     /// dispatch immediately and standby bodies drop every batch.
@@ -363,6 +387,25 @@ impl ClaimGate {
     /// This body's identifier.
     pub fn body_id(&self) -> &str {
         &self.body_id
+    }
+
+    /// What to log when `batch` is spawned. Read it before [`admit`], which
+    /// consumes the clearance. A held-scope follow-up is not a new win, and
+    /// claims disabled is [`DispatchClaimLog::Silent`] so a dispatch with no
+    /// window is not described as one. Ranking does not read this.
+    pub fn dispatch_claim_log(&self, batch: &FlushBatch) -> DispatchClaimLog {
+        if !self.claims_enabled() {
+            return DispatchClaimLog::Silent;
+        }
+        let ids = batch_event_ids(batch);
+        let Some(key) = ids.first() else {
+            return DispatchClaimLog::Silent;
+        };
+        match self.cleared.get(key) {
+            Some(clearance) if clearance.held_scope => DispatchClaimLog::HeldScope,
+            Some(_) => DispatchClaimLog::Won,
+            None => DispatchClaimLog::Silent,
+        }
     }
 
     /// This body's claim rank.
@@ -447,14 +490,24 @@ impl ClaimGate {
     }
 
     /// A batch that passed [`ClaimGate::admit`] as `Dispatch` but found no
-    /// worker (busy owner hold, pool exhausted) keeps the claim it already won:
-    /// the caller requeues it and the next pass dispatches without a new window.
-    pub fn restore_clearance(&mut self, batch: &FlushBatch, now: Instant) {
+    /// worker (busy owner hold, pool exhausted) keeps the clearance it already
+    /// had: the caller requeues it and the next pass dispatches without a new
+    /// window. `held_scope` is the value [`Self::dispatch_claim_log`] reported before
+    /// `admit` consumed the clearance, so a restored follow-up is not later
+    /// logged as a fresh win.
+    pub fn restore_clearance(&mut self, batch: &FlushBatch, now: Instant, held_scope: bool) {
         if !self.claims_enabled() {
             return;
         }
         if let Some(key) = batch_event_ids(batch).into_iter().next() {
-            self.cleared.insert(key, (batch.scope.clone(), now));
+            self.cleared.insert(
+                key,
+                Clearance {
+                    scope: batch.scope.clone(),
+                    at: now,
+                    held_scope,
+                },
+            );
         }
     }
 
@@ -467,7 +520,10 @@ impl ClaimGate {
     /// worse-ranked body that once covered the scope hands it back.
     pub fn holds_scope(&self, scope: &SessionScope) -> bool {
         self.parked.values().any(|p| p.batch.scope == *scope)
-            || self.cleared.values().any(|(s, _)| s == scope)
+            || self
+                .cleared
+                .values()
+                .any(|clearance| clearance.scope == *scope)
             || self.dispatched.values().any(|(s, _)| s == scope)
     }
 
@@ -497,8 +553,14 @@ impl ClaimGate {
         }
         let ids = [event_id.to_string()];
         publish(&ids);
-        self.cleared
-            .insert(event_id.to_string(), (scope.clone(), now));
+        self.cleared.insert(
+            event_id.to_string(),
+            Clearance {
+                scope: scope.clone(),
+                at: now,
+                held_scope: true,
+            },
+        );
         true
     }
 
@@ -528,7 +590,14 @@ impl ClaimGate {
         let mut out = Vec::with_capacity(expired.len());
         for key in expired {
             if let Some(p) = self.parked.remove(&key) {
-                self.cleared.insert(key, (p.batch.scope.clone(), now));
+                self.cleared.insert(
+                    key,
+                    Clearance {
+                        scope: p.batch.scope.clone(),
+                        at: now,
+                        held_scope: false,
+                    },
+                );
                 out.push(p.batch);
             }
         }
@@ -609,7 +678,8 @@ impl ClaimGate {
     /// Forget every won clearance in `scope` (a lost claim voids the stake
     /// that produced them).
     fn void_scope_clearances(&mut self, scope: &SessionScope) {
-        self.cleared.retain(|_, (s, _)| s != scope);
+        self.cleared
+            .retain(|_, clearance| clearance.scope != *scope);
     }
 
     /// Drop bookkeeping older than [`DISPATCHED_TTL`].
@@ -617,7 +687,7 @@ impl ClaimGate {
         self.dispatched
             .retain(|_, (_, at)| now.duration_since(*at) < DISPATCHED_TTL);
         self.cleared
-            .retain(|_, (_, at)| now.duration_since(*at) < DISPATCHED_TTL);
+            .retain(|_, clearance| now.duration_since(clearance.at) < DISPATCHED_TTL);
         self.yielded
             .retain(|_, (_, at)| now.duration_since(*at) < DISPATCHED_TTL);
     }
@@ -856,11 +926,52 @@ mod tests {
         assert_eq!(d, GateDecision::Dispatch);
         let taken = taken.unwrap();
         // Busy owner / pool exhausted: hand it back, no dispatch bookkeeping.
-        g.restore_clearance(&taken, now);
+        g.restore_clearance(&taken, now, false);
         assert!(g.dispatched.is_empty());
         // Next pass dispatches again without a fresh claim window.
         let (d, _) = g.admit(taken, now, |_| panic!("must not re-claim"));
         assert_eq!(d, GateDecision::Dispatch);
+    }
+
+    #[test]
+    fn dispatch_log_is_a_win_only_for_a_closed_window() {
+        let k = keys();
+        let now = Instant::now();
+        let channel = Uuid::new_v4();
+
+        let off = gate("a", RunnerMode::Active, 0);
+        let quiet = batch_in(&k, 1, channel);
+        assert_eq!(
+            off.dispatch_claim_log(&quiet),
+            DispatchClaimLog::Silent,
+            "claims off must not describe a dispatch as a win"
+        );
+
+        let mut g = gate("a", RunnerMode::Active, 10);
+        let e1 = batch_in(&k, 1, channel);
+        assert_eq!(g.dispatch_claim_log(&e1), DispatchClaimLog::Silent);
+        g.admit(e1, now, |_| {});
+        let released = g.release_expired(now + Duration::from_millis(10));
+        let won = released.into_iter().next().unwrap();
+        assert_eq!(g.dispatch_claim_log(&won), DispatchClaimLog::Won);
+        let (d, taken) = g.admit(won, now, |_| panic!("must not re-publish"));
+        assert_eq!(d, GateDecision::Dispatch);
+        let taken = taken.unwrap();
+        g.mark_dispatched(&taken, now);
+
+        let e2 = batch_in(&k, 1, channel);
+        let e2_ids = batch_event_ids(&e2);
+        assert!(g.pre_claim(&e2_ids[0], &taken.scope, now, |_| {}));
+        assert_eq!(
+            g.dispatch_claim_log(&e2),
+            DispatchClaimLog::HeldScope,
+            "a follow-up under a held scope is not a new win"
+        );
+        let (d, again) = g.admit(e2, now, |_| panic!("pre-claimed id must not re-claim"));
+        assert_eq!(d, GateDecision::Dispatch);
+        let again = again.unwrap();
+        g.restore_clearance(&again, now, true);
+        assert_eq!(g.dispatch_claim_log(&again), DispatchClaimLog::HeldScope);
     }
 
     #[test]

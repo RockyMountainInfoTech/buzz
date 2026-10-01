@@ -4945,6 +4945,9 @@ fn dispatch_pending(
             claims.rank(),
             claims.nonce().to_string(),
         );
+        // Before admit consumes the clearance. Claims off stays silent, and a
+        // follow-up pre-claimed under a held scope is not a new win.
+        let claim_log = claims.dispatch_claim_log(&batch);
         let batch = match claims.admit(batch, now, |ids| {
             if let Some(publisher) = claim_publisher {
                 publisher.publish(ids, &claim_body, claim_rank, &claim_nonce);
@@ -5029,7 +5032,11 @@ fn dispatch_pending(
                         }),
                     );
                 }
-                claims.restore_clearance(&batch, now);
+                claims.restore_clearance(
+                    &batch,
+                    now,
+                    claim_log == turn_claim::DispatchClaimLog::HeldScope,
+                );
                 held.push(batch);
                 continue;
             }
@@ -5053,7 +5060,11 @@ fn dispatch_pending(
             None => {
                 let pending = queue.pending_channels();
                 tracing::debug!(pending_channels = pending, "pool_exhausted");
-                claims.restore_clearance(&batch, now);
+                claims.restore_clearance(
+                    &batch,
+                    now,
+                    claim_log == turn_claim::DispatchClaimLog::HeldScope,
+                );
                 queue.requeue_preserve_timestamps(batch);
                 queue.mark_complete(&scope);
                 break;
@@ -5095,13 +5106,27 @@ fn dispatch_pending(
         // cleared but no worker took (hold, pool exhausted) was handed back
         // above and must never look cancellable.
         claims.mark_dispatched(&batch, now);
-        tracing::info!(
-            channel = %channel_id,
-            scope = %scope.telemetry_label(),
-            body = %claims.body_id(),
-            winner = %claims.body_id(),
-            "turn claim won"
-        );
+        match claim_log {
+            turn_claim::DispatchClaimLog::Won => {
+                tracing::info!(
+                    channel = %channel_id,
+                    scope = %scope.telemetry_label(),
+                    body = %claims.body_id(),
+                    winner = %claims.body_id(),
+                    "turn claim won"
+                );
+            }
+            turn_claim::DispatchClaimLog::HeldScope => {
+                tracing::info!(
+                    channel = %channel_id,
+                    scope = %scope.telemetry_label(),
+                    body = %claims.body_id(),
+                    winner = %claims.body_id(),
+                    "turn claim held — follow-up under a scope this body already holds"
+                );
+            }
+            turn_claim::DispatchClaimLog::Silent => {}
+        }
 
         let result_tx = pool.result_tx();
         let ctx_clone = Arc::clone(ctx);
