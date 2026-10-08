@@ -3612,20 +3612,24 @@ async fn run_harness(
                             // turn ends, so a sibling that flushes it first
                             // stands down instead of answering it too.
                             if queued.accepted {
+                                // The raw event id: siblings key their claims on
+                                // the ids in their flushed batch, not an edit's
+                                // original message.
+                                let queued_event_id = queued.steer_event.event.id.to_hex();
                                 let (claim_body, claim_rank, claim_nonce) = (
                                     claim_gate.body_id().to_string(),
                                     claim_gate.rank(),
                                     claim_gate.nonce().to_string(),
                                 );
                                 let pre_claimed = claim_gate.pre_claim(
-                                    &queued.event_id_hex,
+                                    &queued_event_id,
                                     &queued.scope,
                                     tokio::time::Instant::now(),
                                     |ids| claim_publisher.publish(ids, &claim_body, claim_rank, &claim_nonce),
                                 );
                                 if pre_claimed {
                                     tracing::debug!(
-                                        event_id = %queued.event_id_hex,
+                                        event_id = %queued_event_id,
                                         scope = %queued.scope.telemetry_label(),
                                         "turn claim published for follow-up in a held scope"
                                     );
@@ -11417,6 +11421,7 @@ mod error_outcome_emission_tests {
                     .expect("sign"),
                 prompt_tag: "test".to_string(),
                 received_at: std::time::Instant::now(),
+                edit: None,
             }],
             cancelled_events: Vec::new(),
             cancel_reason: None,

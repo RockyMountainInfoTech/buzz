@@ -733,6 +733,7 @@ mod tests {
                 event: text_event(keys, &format!("hello {i} {}", Uuid::new_v4())),
                 prompt_tag: "test".to_string(),
                 received_at: std::time::Instant::now(),
+                edit: None,
             })
             .collect();
         FlushBatch {
@@ -1057,6 +1058,7 @@ mod tests {
             event: text_event(&k, &format!("follow-up {}", Uuid::new_v4())),
             prompt_tag: "test".into(),
             received_at: std::time::Instant::now(),
+            edit: None,
         });
         // Give the loser's copy the same id as the winner's pre-claim by
         // driving on_claim with the real id list instead.
